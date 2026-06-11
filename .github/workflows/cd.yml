@@ -1,0 +1,97 @@
+name: CD — Deploy to Azure
+
+on:
+  # Auto-deploy when CI passes on main
+  workflow_run:
+    workflows: ["CI — Lint & Test"]
+    branches: ["main", "master"]
+    types: [completed]
+
+  # Or trigger manually from GitHub Actions tab
+  workflow_dispatch:
+    inputs:
+      destroy:
+        description: "Destroy infrastructure instead of deploying?"
+        required: false
+        default: "false"
+
+jobs:
+  deploy:
+    # Only run if CI passed (skip on manual trigger check)
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    env:
+      ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_CLIENT_SECRET:   ${{ secrets.AZURE_CLIENT_SECRET }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── Terraform ───────────────────────────────────────────────────────────
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.0"
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: terraform
+        run: terraform plan -out=tfplan
+        env:
+          TF_VAR_ssh_public_key_path: /dev/stdin   # handled below via key injection
+
+      - name: Write SSH key pair
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          echo "${{ secrets.SSH_PUBLIC_KEY }}"  > ~/.ssh/id_rsa.pub
+          chmod 600 ~/.ssh/id_rsa
+
+      - name: Terraform Apply (or Destroy)
+        working-directory: terraform
+        run: |
+          if [ "${{ github.event.inputs.destroy }}" == "true" ]; then
+            terraform destroy -auto-approve
+          else
+            terraform apply -auto-approve tfplan
+          fi
+
+      - name: Get VM public IP
+        if: ${{ github.event.inputs.destroy != 'true' }}
+        working-directory: terraform
+        id: get_ip
+        run: echo "vm_ip=$(terraform output -raw vm_public_ip)" >> $GITHUB_OUTPUT
+
+      # ── Docker deploy ────────────────────────────────────────────────────────
+      - name: Write .env file
+        if: ${{ github.event.inputs.destroy != 'true' }}
+        run: |
+          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" > .env
+          echo "HF_TOKEN=${{ secrets.HF_TOKEN }}"            >> .env
+
+      - name: Install rsync
+        if: ${{ github.event.inputs.destroy != 'true' }}
+        run: sudo apt-get install -y rsync
+
+      - name: Add VM to known hosts
+        if: ${{ github.event.inputs.destroy != 'true' }}
+        run: ssh-keyscan -H ${{ steps.get_ip.outputs.vm_ip }} >> ~/.ssh/known_hosts
+
+      - name: Deploy with Docker
+        if: ${{ github.event.inputs.destroy != 'true' }}
+        run: bash deploy/docker_deploy.sh ${{ steps.get_ip.outputs.vm_ip }}
+
+      - name: Upload evaluation results
+        if: ${{ github.event.inputs.destroy != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-results
+          path: outputs/*.csv
+          retention-days: 30
