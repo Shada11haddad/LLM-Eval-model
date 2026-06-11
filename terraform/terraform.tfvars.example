@@ -1,0 +1,8 @@
+# Copy this to terraform.tfvars and adjust as needed
+
+resource_group_name = "llm-eval-rg"
+location            = "eastus"        # change to region nearest to you
+vm_name             = "llm-eval-vm"
+vm_size             = "Standard_D8s_v3"   # or Standard_NC4as_T4_v3 for GPU
+admin_username      = "azureuser"
+ssh_public_key_path = "~/.ssh/id_rsa.pub"

@@ -1,0 +1,13 @@
+loguru
+python-dotenv
+langchain
+langchain-openai
+langchain-text-splitters
+  faiss-cpu
+   kagglehub
+    pandas 
+    tqdm 
+    openai
+    numpy 
+    matplotlib
+    sentence_transformers
