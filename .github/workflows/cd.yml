@@ -69,6 +69,35 @@ jobs:
         working-directory: terraform
         run: terraform init
 
+      # If a previous run failed mid-way, the resource group may already exist
+      # in Azure but not in Terraform state. We delete it so Terraform starts clean.
+      - name: Clean up existing resource group (if any)
+        if: ${{ github.event.inputs.destroy != 'true' }}
+        run: |
+          az login --service-principal \
+            -u "$ARM_CLIENT_ID" -p "$ARM_CLIENT_SECRET" \
+            --tenant "$ARM_TENANT_ID" --output none
+
+          RG_NAME=$(grep 'resource_group_name' terraform/terraform.tfvars \
+            | head -1 | cut -d'"' -f2)
+          RG_NAME=${RG_NAME:-llm-eval-rg}
+
+          if az group exists --name "$RG_NAME" --subscription "$ARM_SUBSCRIPTION_ID" \
+              | grep -q true; then
+            echo "Found existing resource group '$RG_NAME' — deleting for clean deploy..."
+            az group delete --name "$RG_NAME" \
+              --subscription "$ARM_SUBSCRIPTION_ID" --yes
+            echo "Waiting for deletion..."
+            while az group exists --name "$RG_NAME" \
+                --subscription "$ARM_SUBSCRIPTION_ID" | grep -q true; do
+              echo "  still deleting..."
+              sleep 15
+            done
+            echo "Done — resource group removed."
+          else
+            echo "No existing resource group found — proceeding with clean deploy."
+          fi
+
       - name: Terraform Plan
         if: ${{ github.event.inputs.destroy != 'true' }}
         working-directory: terraform
