@@ -17,15 +17,21 @@ variable "vm_name" {
 }
 
 variable "vm_size" {
-  description = "Azure VM size. Standard_D8s_v3 = 8 vCPU / 32 GB RAM (CPU inference). Use Standard_NC4as_T4_v3 for GPU."
+  description = "Azure VM size. Standard_D4s_v3 = 4 vCPU / 16 GB RAM. Upgrade to Standard_D8s_v3 after quota increase."
   type        = string
-  default     = "Standard_D8s_v3"
+  default     = "Standard_D4s_v3"
 }
 
 variable "admin_username" {
   description = "SSH admin username for the VM"
   type        = string
   default     = "azureuser"
+}
+
+variable "vm_zone" {
+  description = "Availability zone for the VM and public IP (1, 2, or 3). Required for zone-restricted SKUs on free-trial subscriptions."
+  type        = string
+  default     = "1"
 }
 
 # No SSH key variable needed — Terraform generates the key pair automatically via tls_private_key
