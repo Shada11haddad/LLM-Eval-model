@@ -26,9 +26,7 @@ jobs:
       ARM_CLIENT_SECRET:   ${{ secrets.AZURE_CLIENT_SECRET }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
-      # VM size — D4s_v3 = 4 vCPU / 16 GB, fits free-tier quota of 4 cores.
-      # Change to Standard_D8s_v3 after requesting a quota increase in Azure Portal.
-      TF_VAR_vm_size: "Standard_D4s_v3"
+      # VM size is resolved dynamically — see "Pick available VM size" step below.
       # Opt into Node 24 ahead of the June 16, 2026 default switch
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
@@ -100,6 +98,53 @@ jobs:
           else
             echo "No existing resource group found — proceeding with clean deploy."
           fi
+
+      # Pick the first available 4-core SKU in the target region.
+      # Tries a ranked list so we never fail due to a single SKU being sold out.
+      - name: Pick available VM size
+        if: ${{ github.event.inputs.destroy != 'true' }}
+        id: pick_sku
+        run: |
+          LOCATION=$(grep '^location' terraform/terraform.tfvars \
+            | head -1 | cut -d'"' -f2)
+          LOCATION=${LOCATION:-eastus}
+
+          # Ranked preference — all 4 vCPU / 16 GB, fits ≤4 core quota
+          CANDIDATES=(
+            Standard_D4as_v5
+            Standard_D4s_v5
+            Standard_D4as_v4
+            Standard_D4s_v4
+            Standard_D4ds_v5
+            Standard_D4ds_v4
+            Standard_D4s_v3
+            Standard_D4a_v4
+          )
+
+          echo "Checking available SKUs in $LOCATION..."
+          CHOSEN=""
+          for SKU in "${CANDIDATES[@]}"; do
+            RESTRICTIONS=$(az vm list-skus \
+              --location "$LOCATION" \
+              --size "$SKU" \
+              --query "[0].restrictions" \
+              --output tsv 2>/dev/null)
+            if [ -z "$RESTRICTIONS" ] || [ "$RESTRICTIONS" == "[]" ]; then
+              echo "  ✓ $SKU — available"
+              CHOSEN="$SKU"
+              break
+            else
+              echo "  ✗ $SKU — restricted ($RESTRICTIONS)"
+            fi
+          done
+
+          if [ -z "$CHOSEN" ]; then
+            echo "::error::No available 4-core SKU found in $LOCATION. Try a different region."
+            exit 1
+          fi
+
+          echo "Selected VM size: $CHOSEN"
+          echo "TF_VAR_vm_size=$CHOSEN" >> $GITHUB_ENV
 
       - name: Terraform Plan
         if: ${{ github.event.inputs.destroy != 'true' }}
