@@ -12,7 +12,8 @@ venv/
 terraform/.terraform/
 terraform/*.tfstate
 terraform/*.tfstate.backup
-terraform/*.tfvars
+# terraform/*.tfvars  ← NOT ignored: our tfvars has no secrets (SSH keys are auto-generated)
+terraform/sensitive.tfvars
 terraform/.terraform.lock.hcl
 terraform/generated_key.pem
 terraform/backend_override.tf

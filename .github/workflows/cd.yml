@@ -26,6 +26,9 @@ jobs:
       ARM_CLIENT_SECRET:   ${{ secrets.AZURE_CLIENT_SECRET }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+      # VM size — D4s_v3 = 4 vCPU / 16 GB, fits free-tier quota of 4 cores.
+      # Change to Standard_D8s_v3 after requesting a quota increase in Azure Portal.
+      TF_VAR_vm_size: "Standard_D4s_v3"
       # Opt into Node 24 ahead of the June 16, 2026 default switch
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
