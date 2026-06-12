@@ -53,7 +53,10 @@ echo ">>> [4/4] Downloading results..."
 mkdir -p outputs
 scp -o StrictHostKeyChecking=no \
   "$ADMIN_USER@$VM_IP:$REMOTE_DIR/outputs/*.csv" \
-  ./outputs/ 2>/dev/null && echo "Results saved to ./outputs/" || echo "No CSV outputs yet."
+  ./outputs/ 2>/dev/null && echo "CSV results saved to ./outputs/" || echo "No CSV outputs yet."
+scp -o StrictHostKeyChecking=no \
+  "$ADMIN_USER@$VM_IP:$REMOTE_DIR/outputs/meyar.db" \
+  ./outputs/ 2>/dev/null && echo "SQLite db saved to ./outputs/meyar.db" || echo "No meyar.db yet."
 
 echo ""
 echo "=========================================="

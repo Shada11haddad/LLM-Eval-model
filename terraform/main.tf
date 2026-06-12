@@ -4,8 +4,29 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 3.0"
     }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
+    local = {
+      source  = "hashicorp/local"
+      version = "~> 2.0"
+    }
   }
   required_version = ">= 1.3.0"
+}
+
+# ── SSH Key Pair (auto-generated) ──────────────────────────────────────────────
+resource "tls_private_key" "ssh" {
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
+
+# Save private key locally so you can SSH into the VM
+resource "local_sensitive_file" "private_key" {
+  content         = tls_private_key.ssh.private_key_openssh
+  filename        = "${path.module}/generated_key.pem"
+  file_permission = "0600"
 }
 
 provider "azurerm" {
@@ -88,7 +109,7 @@ resource "azurerm_linux_virtual_machine" "vm" {
 
   admin_ssh_key {
     username   = var.admin_username
-    public_key = file(var.ssh_public_key_path)
+    public_key = tls_private_key.ssh.public_key_openssh
   }
 
   os_disk {

@@ -26,10 +26,15 @@ jobs:
       ARM_CLIENT_SECRET:   ${{ secrets.AZURE_CLIENT_SECRET }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+      # Opt into Node 24 ahead of the June 16, 2026 default switch
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
+      - name: Setup SSH dir
+        run: mkdir -p ~/.ssh
 
       # ── Terraform ───────────────────────────────────────────────────────────
       - name: Setup Terraform
@@ -37,22 +42,37 @@ jobs:
         with:
           terraform_version: "1.7.0"
 
+      # Remote state so re-runs don't collide with existing resources.
+      # Needs the one-time bootstrap in .github/SECRETS.md + TFSTATE_* secrets.
+      - name: Configure remote state backend
+        env:
+          TFSTATE_RG: ${{ secrets.TFSTATE_RESOURCE_GROUP }}
+          TFSTATE_SA: ${{ secrets.TFSTATE_STORAGE_ACCOUNT }}
+        run: |
+          if [ -n "$TFSTATE_SA" ]; then
+            cat > terraform/backend_override.tf <<EOF
+          terraform {
+            backend "azurerm" {
+              resource_group_name  = "$TFSTATE_RG"
+              storage_account_name = "$TFSTATE_SA"
+              container_name       = "tfstate"
+              key                  = "llm-eval.tfstate"
+            }
+          }
+          EOF
+            echo "Remote state backend configured."
+          else
+            echo "::warning::TFSTATE_* secrets not set — using local state. Re-deploys will fail once infra exists. See .github/SECRETS.md."
+          fi
+
       - name: Terraform Init
         working-directory: terraform
         run: terraform init
 
       - name: Terraform Plan
+        if: ${{ github.event.inputs.destroy != 'true' }}
         working-directory: terraform
         run: terraform plan -out=tfplan
-        env:
-          TF_VAR_ssh_public_key_path: /dev/stdin   # handled below via key injection
-
-      - name: Write SSH key pair
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          echo "${{ secrets.SSH_PUBLIC_KEY }}"  > ~/.ssh/id_rsa.pub
-          chmod 600 ~/.ssh/id_rsa
 
       - name: Terraform Apply (or Destroy)
         working-directory: terraform
@@ -63,11 +83,15 @@ jobs:
             terraform apply -auto-approve tfplan
           fi
 
-      - name: Get VM public IP
+      - name: Extract VM IP and SSH key from Terraform
         if: ${{ github.event.inputs.destroy != 'true' }}
         working-directory: terraform
         id: get_ip
-        run: echo "vm_ip=$(terraform output -raw vm_public_ip)" >> $GITHUB_OUTPUT
+        run: |
+          echo "vm_ip=$(terraform output -raw vm_public_ip)" >> $GITHUB_OUTPUT
+          # Extract the auto-generated private key — no SSH secret needed
+          terraform output -raw private_key_pem > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
 
       # ── Docker deploy ────────────────────────────────────────────────────────
       - name: Write .env file
@@ -93,5 +117,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: evaluation-results
-          path: outputs/*.csv
+          path: |
+            outputs/*.csv
+            outputs/meyar.db
           retention-days: 30
