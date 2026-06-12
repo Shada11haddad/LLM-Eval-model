@@ -78,53 +78,46 @@ jobs:
             -u "$ARM_CLIENT_ID" -p "$ARM_CLIENT_SECRET" \
             --tenant "$ARM_TENANT_ID" --output none
 
-      # Scan (region, SKU) pairs until we find one with no capacity restrictions.
-      # az vm list-skus returns an empty restrictions array only when the SKU is
-      # genuinely available for the subscription in that region.
+      # Find the first region where this subscription can create a ≥16 GB / ≤4 vCPU VM.
+      # az vm list-skus (without --all) already omits SKUs that are unavailable for
+      # this subscription, so we just check whether the SKU appears at all.
       - name: Find available region + VM size
         if: ${{ github.event.inputs.destroy != 'true' }}
         run: |
-          # 4 vCPU / 16 GB pairs — ordered by free-trial reliability
-          PAIRS=(
-            "westus2,Standard_B4ms"
-            "westus,Standard_B4ms"
-            "centralus,Standard_B4ms"
-            "northcentralus,Standard_B4ms"
-            "southcentralus,Standard_B4ms"
-            "eastus2,Standard_B4ms"
-            "eastus,Standard_B4ms"
-            "westeurope,Standard_B4ms"
-            "northeurope,Standard_B4ms"
-            "westus2,Standard_D4as_v5"
-            "eastus2,Standard_D4as_v5"
-            "westus2,Standard_D4s_v5"
-            "eastus2,Standard_D4s_v5"
+          REGIONS=(
+            westus2 eastus2 westus eastus centralus
+            northcentralus southcentralus westeurope northeurope
           )
 
           CHOSEN_LOC=""
           CHOSEN_SKU=""
 
-          for PAIR in "${PAIRS[@]}"; do
-            LOC="${PAIR%%,*}"
-            SKU="${PAIR##*,}"
-            echo -n "  Checking $LOC / $SKU ... "
-            RESULT=$(az vm list-skus \
+          for LOC in "${REGIONS[@]}"; do
+            echo "--- $LOC ---"
+
+            # Ask Azure: what ≤4-vCPU SKUs with ≥16 GB RAM are available here?
+            AVAILABLE=$(az vm list-skus \
               --location "$LOC" \
-              --size "$SKU" \
-              --query "[?length(restrictions)==\`0\`].name" \
+              --query "[?capabilities[?name=='vCPUs' && to_number(value)<='4'] && capabilities[?name=='MemoryGB' && to_number(value)>='16']].name" \
               --output tsv 2>/dev/null)
-            if [ -n "$RESULT" ]; then
-              echo "✓ available"
-              CHOSEN_LOC="$LOC"
-              CHOSEN_SKU="$SKU"
-              break
-            else
-              echo "✗ restricted or no capacity"
+
+            if [ -z "$AVAILABLE" ]; then
+              echo "  no matching SKUs in $LOC"
+              continue
             fi
+
+            # Pick the first one
+            CHOSEN_SKU=$(echo "$AVAILABLE" | head -1)
+            echo "  ✓ $CHOSEN_SKU available in $LOC"
+            CHOSEN_LOC="$LOC"
+            break
           done
 
           if [ -z "$CHOSEN_LOC" ]; then
-            echo "::error::No available VM found across all regions. Try again later or open an Azure support ticket."
+            echo ""
+            echo "::error::No VM with ≤4 vCPU and ≥16 GB found in any region."
+            echo "         Run: az vm list-skus --location eastus2 --query \"[?capabilities[?name=='vCPUs' && to_number(value)<='4']].name\" --output tsv"
+            echo "         to see what your subscription supports."
             exit 1
           fi
 
