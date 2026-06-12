@@ -37,7 +37,11 @@ class Config:
     # FAISS files
     FAISS_INDEX_PATH = os.path.join(DATA_PROCESSED_DIR, "podcast_index.faiss")
     CHUNKS_PKL_PATH = os.path.join(DATA_PROCESSED_DIR, "podcast_chunks.pkl")
-    
+
+    # SQLite database (evaluation runs + results)
+    DB_PATH = os.path.join(OUTPUTS_DIR, "meyar.db")
+
+
     # Evaluation counts (reduce if hitting rate limits)
     NUM_RAG_QUESTIONS = 10
     NUM_TQA_QUESTIONS = 10

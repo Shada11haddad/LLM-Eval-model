@@ -28,8 +28,4 @@ variable "admin_username" {
   default     = "azureuser"
 }
 
-variable "ssh_public_key_path" {
-  description = "Path to your SSH public key file"
-  type        = string
-  default     = "~/.ssh/id_rsa.pub"
-}
+# No SSH key variable needed — Terraform generates the key pair automatically via tls_private_key
