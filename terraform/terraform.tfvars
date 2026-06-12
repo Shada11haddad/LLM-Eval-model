@@ -5,7 +5,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 resource_group_name = "llm-eval-rg"
-location            = "eastus"           # change to region nearest to you
+location            = "eastus2"          # better free-trial capacity than eastus
 vm_name             = "llm-eval-vm"
-vm_size             = "Standard_D4s_v3"  # 4 vCPU / 16 GB — fits free-tier quota; swap to Standard_D8s_v3 after quota increase
+vm_size             = "Standard_B4ms"    # 4 vCPU / 16 GB — ~$0.166/hr, burstable, reliable on free trial
 admin_username      = "azureuser"
