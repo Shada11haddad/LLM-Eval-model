@@ -30,9 +30,28 @@ services:
       "ollama pull deepseek-r1:7b && ollama pull llama3.2"]
     restart: "no"
 
-  # Python evaluation app
+  # FastAPI server — query results + trigger evaluations
+  api:
+    build: .
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      ollama-init:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    volumes:
+      - ./outputs:/app/outputs
+      - ./data:/app/data
+    restart: unless-stopped
+
+  # Batch evaluation run (runs once, then exits)
   app:
     build: .
+    command: python scripts/run_full_evaluation.py
     depends_on:
       ollama-init:
         condition: service_completed_successfully

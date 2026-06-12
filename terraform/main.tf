@@ -59,7 +59,8 @@ resource "azurerm_public_ip" "pip" {
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   allocation_method   = "Static"
-  sku                 = "Standard"   # Basic SKU quota is 0 on this subscription
+  sku                 = "Standard"
+  zones               = [var.vm_zone]   # must match the VM zone
 }
 
 resource "azurerm_network_security_group" "nsg" {
@@ -75,6 +76,18 @@ resource "azurerm_network_security_group" "nsg" {
     protocol                   = "Tcp"
     source_port_range          = "*"
     destination_port_range     = "22"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "FastAPI"
+    priority                   = 1002
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "8000"
     source_address_prefix      = "*"
     destination_address_prefix = "*"
   }
@@ -105,6 +118,7 @@ resource "azurerm_linux_virtual_machine" "vm" {
   location            = azurerm_resource_group.rg.location
   size                = var.vm_size
   admin_username      = var.admin_username
+  zone                = var.vm_zone   # pin to zone so zone-restricted SKUs work
 
   network_interface_ids = [azurerm_network_interface.nic.id]
 

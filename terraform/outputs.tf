@@ -13,6 +13,16 @@ output "deploy_command" {
   value       = "bash deploy/docker_deploy.sh ${azurerm_public_ip.pip.ip_address}"
 }
 
+output "api_url" {
+  description = "FastAPI base URL (available after docker compose up)"
+  value       = "http://${azurerm_public_ip.pip.ip_address}:8000"
+}
+
+output "api_docs_url" {
+  description = "Interactive Swagger UI"
+  value       = "http://${azurerm_public_ip.pip.ip_address}:8000/docs"
+}
+
 output "private_key_pem" {
   description = "Generated SSH private key — used by CI/CD to connect to the VM"
   value       = tls_private_key.ssh.private_key_openssh
