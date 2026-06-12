@@ -26,10 +26,8 @@ jobs:
       ARM_CLIENT_SECRET:   ${{ secrets.AZURE_CLIENT_SECRET }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
-      # eastus2 has better free-trial capacity than eastus.
-      # B4ms (4 vCPU / 16 GB, ~$0.166/hr) is burstable and reliably available on free trials.
-      TF_VAR_location: "eastus2"
-      TF_VAR_vm_size:  "Standard_B4ms"
+      # TF_VAR_location and TF_VAR_vm_size are set dynamically
+      # by the "Find available region + VM size" step below.
       # Opt into Node 24 ahead of the June 16, 2026 default switch
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
@@ -73,15 +71,73 @@ jobs:
         working-directory: terraform
         run: terraform init
 
-      # If a previous run failed mid-way, the resource group may already exist
-      # in Azure but not in Terraform state. We delete it so Terraform starts clean.
-      - name: Clean up existing resource group (if any)
-        if: ${{ github.event.inputs.destroy != 'true' }}
+      # Log in once — credentials persist in ~/.azure for all subsequent az steps.
+      - name: Azure CLI login
         run: |
           az login --service-principal \
             -u "$ARM_CLIENT_ID" -p "$ARM_CLIENT_SECRET" \
             --tenant "$ARM_TENANT_ID" --output none
 
+      # Scan (region, SKU) pairs until we find one with no capacity restrictions.
+      # az vm list-skus returns an empty restrictions array only when the SKU is
+      # genuinely available for the subscription in that region.
+      - name: Find available region + VM size
+        if: ${{ github.event.inputs.destroy != 'true' }}
+        run: |
+          # 4 vCPU / 16 GB pairs — ordered by free-trial reliability
+          PAIRS=(
+            "westus2,Standard_B4ms"
+            "westus,Standard_B4ms"
+            "centralus,Standard_B4ms"
+            "northcentralus,Standard_B4ms"
+            "southcentralus,Standard_B4ms"
+            "eastus2,Standard_B4ms"
+            "eastus,Standard_B4ms"
+            "westeurope,Standard_B4ms"
+            "northeurope,Standard_B4ms"
+            "westus2,Standard_D4as_v5"
+            "eastus2,Standard_D4as_v5"
+            "westus2,Standard_D4s_v5"
+            "eastus2,Standard_D4s_v5"
+          )
+
+          CHOSEN_LOC=""
+          CHOSEN_SKU=""
+
+          for PAIR in "${PAIRS[@]}"; do
+            LOC="${PAIR%%,*}"
+            SKU="${PAIR##*,}"
+            echo -n "  Checking $LOC / $SKU ... "
+            RESULT=$(az vm list-skus \
+              --location "$LOC" \
+              --size "$SKU" \
+              --query "[?length(restrictions)==\`0\`].name" \
+              --output tsv 2>/dev/null)
+            if [ -n "$RESULT" ]; then
+              echo "✓ available"
+              CHOSEN_LOC="$LOC"
+              CHOSEN_SKU="$SKU"
+              break
+            else
+              echo "✗ restricted or no capacity"
+            fi
+          done
+
+          if [ -z "$CHOSEN_LOC" ]; then
+            echo "::error::No available VM found across all regions. Try again later or open an Azure support ticket."
+            exit 1
+          fi
+
+          echo ""
+          echo "Selected: $CHOSEN_SKU in $CHOSEN_LOC"
+          echo "TF_VAR_location=$CHOSEN_LOC" >> $GITHUB_ENV
+          echo "TF_VAR_vm_size=$CHOSEN_SKU"  >> $GITHUB_ENV
+
+      # If a previous run failed mid-way, the resource group may already exist
+      # in Azure but not in Terraform state. We delete it so Terraform starts clean.
+      - name: Clean up existing resource group (if any)
+        if: ${{ github.event.inputs.destroy != 'true' }}
+        run: |
           RG_NAME=$(grep 'resource_group_name' terraform/terraform.tfvars \
             | head -1 | cut -d'"' -f2)
           RG_NAME=${RG_NAME:-llm-eval-rg}
@@ -99,7 +155,7 @@ jobs:
             done
             echo "Done — resource group removed."
           else
-            echo "No existing resource group found — proceeding with clean deploy."
+            echo "No existing resource group — clean deploy."
           fi
 
       - name: Terraform Plan
