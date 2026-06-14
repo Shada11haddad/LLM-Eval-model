@@ -86,15 +86,20 @@ jobs:
         run: |
           REGIONS=(westus2 eastus2 westus eastus centralus northcentralus southcentralus westeurope northeurope)
 
-          # All 4 vCPU / ≥16 GB candidates across multiple families
+          # Candidates ordered by reliability on free-trial subscriptions.
+          # Includes 2-vCPU / 16 GB E-series (memory-optimized) since 4-vCPU
+          # SKUs are often blocked even when core quota allows them.
           SKUS=(
+            Standard_E2s_v5   Standard_E2as_v5
+            Standard_E2s_v4   Standard_E2as_v4
+            Standard_E2ds_v5  Standard_E2ds_v4
             Standard_B4ms
-            Standard_D4as_v5 Standard_D4s_v5
-            Standard_D4as_v4 Standard_D4s_v4
-            Standard_D4_v3   Standard_D4s_v3
-            Standard_E2as_v5 Standard_E2s_v5
-            Standard_E2as_v4 Standard_E2s_v4
-            Standard_D4a_v4
+            Standard_D4as_v5  Standard_D4s_v5
+            Standard_D4as_v4  Standard_D4s_v4
+            Standard_D4_v3    Standard_D4s_v3
+            Standard_B2ms
+            Standard_D2as_v5  Standard_D2s_v5
+            Standard_D2as_v4  Standard_D2s_v4
           )
 
           CHOSEN_LOC=""
