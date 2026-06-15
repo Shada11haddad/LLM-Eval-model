@@ -16,13 +16,12 @@ terraform {
   required_version = ">= 1.3.0"
 }
 
-# ── SSH Key Pair (auto-generated) ──────────────────────────────────────────────
+# ── SSH Key Pair (auto-generated) ──────────────────────────────
 resource "tls_private_key" "ssh" {
   algorithm = "RSA"
   rsa_bits  = 4096
 }
 
-# Save private key locally so you can SSH into the VM
 resource "local_sensitive_file" "private_key" {
   content         = tls_private_key.ssh.private_key_openssh
   filename        = "${path.module}/generated_key.pem"
@@ -31,16 +30,15 @@ resource "local_sensitive_file" "private_key" {
 
 provider "azurerm" {
   features {}
-  # subscription_id is supplied via ARM_SUBSCRIPTION_ID env var (GitHub secret)
 }
 
-# ── Resource Group ─────────────────────────────────────────────────────────────
+# ── Resource Group ─────────────────────────────────────────────
 resource "azurerm_resource_group" "rg" {
   name     = var.resource_group_name
   location = var.location
 }
 
-# ── Networking ─────────────────────────────────────────────────────────────────
+# ── Networking ─────────────────────────────────────────────────
 resource "azurerm_virtual_network" "vnet" {
   name                = "${var.vm_name}-vnet"
   address_space       = ["10.0.0.0/16"]
@@ -61,7 +59,7 @@ resource "azurerm_public_ip" "pip" {
   resource_group_name = azurerm_resource_group.rg.name
   allocation_method   = "Static"
   sku                 = "Standard"
-  zones               = [var.vm_zone]   # must match the VM zone
+  # zone pinning removed — it was causing SkuNotAvailable on trial subs
 }
 
 resource "azurerm_network_security_group" "nsg" {
@@ -112,15 +110,13 @@ resource "azurerm_network_interface_security_group_association" "nsg_assoc" {
   network_security_group_id = azurerm_network_security_group.nsg.id
 }
 
-# ── Virtual Machine ────────────────────────────────────────────────────────────
+# ── Virtual Machine ────────────────────────────────────────────
 resource "azurerm_linux_virtual_machine" "vm" {
   name                = var.vm_name
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
-  size                = Standard_B1s
-# replaced size = var.vm_size with = Standard_B1s above me.
+  size                = var.vm_size
   admin_username      = var.admin_username
-  zone                = var.vm_zone   # pin to zone so zone-restricted SKUs work
 
   network_interface_ids = [azurerm_network_interface.nic.id]
 
@@ -131,8 +127,8 @@ resource "azurerm_linux_virtual_machine" "vm" {
 
   os_disk {
     caching              = "ReadWrite"
-    storage_account_type = "StandardV2_LRS"
-    disk_size_gb         = 16
+    storage_account_type = "Standard_LRS"
+    disk_size_gb         = 64
   }
 
   source_image_reference {
