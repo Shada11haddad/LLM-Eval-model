@@ -5,13 +5,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 resource_group_name = "llm-eval-rg2"
-location            = "westeurope"          # better free-trial capacity than eastus
+location            = "eastasia"          # better free-trial capacity than eastus
 vm_name             = "llm-eval-vm"
 vm_size             = "Standard_B1s"    # 4 vCPU / 16 GB — ~$0.166/hr, burstable, reliable on free trial
 admin_username      = "azureuser"
 
 
 
-##eastus2 replaced with swedencentral to now with westeurope
+##eastus2 replaced with swedencentral to now with westeurope, eastasia
 ##Standard_B4ms repalced with Standard_B1s
 ##every new run needs a new resource_group_name, now its llm-eval-rg2, next time it weill be llm-eval-rg3 unless we deleted the llm-eval-rg2.
