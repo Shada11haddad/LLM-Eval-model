@@ -7,7 +7,7 @@
 resource_group_name = "llm-eval-rg3"
 location            = "eastasia"          # better free-trial capacity than eastus
 vm_name             = "llm-eval-vm"
-vm_size             = "Standard_B1s"    # 4 vCPU / 16 GB — ~$0.166/hr, burstable, reliable on free trial
+vm_size             = "Standard_B2ts_v2"    # 4 vCPU / 16 GB — ~$0.166/hr, burstable, reliable on free trial
 admin_username      = "azureuser"
 
 
