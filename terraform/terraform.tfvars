@@ -13,3 +13,4 @@ admin_username      = "azureuser"
 
 
 ##eastus2 replaced with swedencentral 
+##Standard_B4ms repalced with Standard_B1s
