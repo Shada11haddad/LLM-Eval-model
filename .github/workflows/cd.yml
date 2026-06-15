@@ -85,7 +85,7 @@ jobs:
         if: ${{ github.event.inputs.destroy != 'true' }}
         run: |
           #REGIONS=(westus2 eastus2 westus eastus centralus northcentralus southcentralus westeurope northeurope)
-          REGIONS = (westeurope)
+          REGIONS = (eastasia)
           SKUS = (Standard_B1s)
 
           # Candidates ordered by reliability on free-trial subscriptions.
