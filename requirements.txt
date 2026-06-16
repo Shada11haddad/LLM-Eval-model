@@ -10,4 +10,4 @@ langchain-text-splitters
     openai
     numpy 
     matplotlib
-    sentence_transformers
+    langchain-huggingface

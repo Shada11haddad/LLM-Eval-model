@@ -1,33 +1,38 @@
 import os
-from langchain_ollama import ChatOllama
-from openai import OpenAI
+from langchain_openai import ChatOpenAI
+from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 from dotenv import load_dotenv
+from config import cfg
 
 load_dotenv()
 
-deepseek_client = ChatOllama(
-    model="deepseek-r1:7b",
-    temperature=0,
-    base_url="http://localhost:11434",
-    timeout=120  # دقيقتين
-)
+def get_model_client(model_key: str):
+    """
+    model_key: 'deepseek', 'llama', 'qwen', 'gpt4o',
+    """
+    model_info = cfg.MODELS.get(model_key)
+    if not model_info:
+        raise ValueError(f"Model {model_key} not found in config.MODELS")
+    
+    provider = model_info["provider"]
+    model_name = model_info["model"]
+    
+    if provider == "openai":
+        return ChatOpenAI(model=model_name,temperature=0, api_key=cfg.OPENAI_API_KEY)
+    elif provider == "huggingface":
+        llm = HuggingFaceEndpoint(
+            repo_id=model_name,
+            provider=model_info.get("hf_provider", "auto"),
+            huggingfacehub_api_token=cfg.HF_TOKEN,
+            max_new_tokens=512,
+            temperature=0.01,
+        )
+        return ChatHuggingFace(llm=llm)
+    else:
+        raise ValueError(f"Unknown provider {provider}")
 
-llama_client = ChatOllama(
-    model="llama3.2",
-    temperature=0,
-    base_url="http://localhost:11434",
-    timeout=60
-)
 
-# ------------------------------
-# 3. عميل الحكم (Judge) - كما هو
-# ------------------------------
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-judge_client = OpenAI(api_key=OPENAI_API_KEY)
+judge_client = get_model_client("judge")
 
-# ------------------------------
-# 4. أسماء النماذج (للتتبع)
-# ------------------------------
-DEEPSEEK_MODEL = "deepseek-r1:7b"
-LLAMA_MODEL = "llama3.2"
-JUDGE_MODEL = "gpt-5.5"
+def get_all_models():
+    return list(cfg.MODELS.keys())

@@ -1,32 +1,87 @@
 import pandas as pd
-import os
-import kagglehub
-from config import cfg
+from pathlib import Path
 
-def load_truthfulqa():
-    url = "https://raw.githubusercontent.com/sylinrl/TruthfulQA/main/TruthfulQA.csv"
-    df = pd.read_csv(url)
-    print(f" TruthfulQA loaded: {len(df)} questions")
+from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
+
+
+def detect_task_type(file_path: str):
+    """
+    Detect task type ONCE when user uploads file.
+
+    Returns:
+        open_qa
+        rag
+    """
+
+    extension = Path(file_path).suffix.lower()
+
+    if extension in [".txt", ".pdf", ".docx"]:
+        return "rag"
+
+    elif extension in [".csv", ".xlsx"]:
+
+        if extension == ".csv":
+            df = pd.read_csv(file_path, nrows=5)
+        else:
+            df = pd.read_excel(file_path, nrows=5)
+
+        columns = [c.lower().strip() for c in df.columns]
+
+        has_question = "question" in columns
+
+        has_answer = any(
+            col in columns
+            for col in [
+                "answer",
+                "ground_truth",
+                "reference_answer"
+            ]
+        )
+
+        if has_question and has_answer:
+            return "open_qa"
+
+        raise ValueError("Dataset must contain question and answer columns")
+
+    raise ValueError(f"Unsupported file type: {extension}")
+
+
+def load_qa_dataset(file_path: str):
+    """
+    Load QA dataset uploaded by user
+    """
+
+    extension = Path(file_path).suffix.lower()
+
+    if extension == ".csv":
+        df = pd.read_csv(file_path)
+
+    elif extension == ".xlsx":
+        df = pd.read_excel(file_path)
+
+    else:
+        raise ValueError("Unsupported QA dataset format")
+
     return df
 
-def load_podcast_transcript():
-    """Load podcast transcript from local raw folder or download from Kaggle"""
-    raw_path = os.path.join(cfg.DATA_RAW_DIR, "acquired_transcripts_all.txt")
-    if os.path.exists(raw_path):
-        with open(raw_path, "r", encoding="utf-8") as f:
-            text = f.read()
-        print(f"Loaded podcast transcript from local file ({len(text):,} chars)")
-        return text
-    
-    print(" Downloading podcast dataset from Kaggle...")
-    dataset_path = kagglehub.dataset_download("harrywang/acquired-podcast-transcripts-and-rag-evaluation")
-    for f in os.listdir(dataset_path):
-        if f.endswith(".txt"):
-            with open(os.path.join(dataset_path, f), "r", encoding="utf-8") as fp:
-                text = fp.read()
-            # save a copy locally for next time
-            with open(raw_path, "w", encoding="utf-8") as out:
-                out.write(text)
-            print(f" Loaded and saved podcast transcript ({len(text):,} chars)")
-            return text
-    raise FileNotFoundError("No podcast transcript found in Kaggle dataset")
+
+def load_document(file_path: str) -> str:
+    """
+    Load TXT / PDF / DOCX document and return plain text
+    """
+
+    extension = Path(file_path).suffix.lower()
+
+    if extension == ".txt":
+        with open(file_path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    elif extension == ".pdf":
+        pages = PyPDFLoader(file_path).load()
+        return "\n\n".join(p.page_content for p in pages)
+
+    elif extension == ".docx":
+        pages = Docx2txtLoader(file_path).load()
+        return "\n\n".join(p.page_content for p in pages)
+
+    raise ValueError(f"Unsupported document format: {extension}")
