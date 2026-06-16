@@ -1,13 +1,12 @@
-
 name: CD — Deploy to Azure
- 
+
 on:
   # Auto-deploy when CI passes on main
   workflow_run:
     workflows: ["CI — Lint & Test"]
     branches: ["main", "master"]
     types: [completed]
- 
+
   # Or trigger manually from GitHub Actions tab
   workflow_dispatch:
     inputs:
@@ -15,37 +14,36 @@ on:
         description: "Destroy infrastructure instead of deploying?"
         required: false
         default: "false"
- 
+
 jobs:
   deploy:
     # Only run if CI passed (skip on manual trigger check)
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
- 
+
     env:
       ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
       ARM_CLIENT_SECRET:   ${{ secrets.AZURE_CLIENT_SECRET }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
-      # Location and VM size now come from terraform/terraform.tfvars
-      # (single source of truth). The old "Find available region" step
-      # was removed — it was broken and overridden by tfvars anyway.
+      # Location and VM size come from terraform/terraform.tfvars
+      # (single source of truth).
       # Opt into Node 24 ahead of the June 16, 2026 default switch
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
- 
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
- 
+
       - name: Setup SSH dir
         run: mkdir -p ~/.ssh
- 
+
       # ── Terraform ───────────────────────────────────────────────────────────
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.7.0"
- 
+
       # Remote state so re-runs don't collide with existing resources.
       # Needs the one-time bootstrap in .github/SECRETS.md + TFSTATE_* secrets.
       - name: Configure remote state backend
@@ -68,18 +66,18 @@ jobs:
           else
             echo "::warning::TFSTATE_* secrets not set — using local state. Re-deploys will fail once infra exists. See .github/SECRETS.md."
           fi
- 
+
       - name: Terraform Init
         working-directory: terraform
         run: terraform init
- 
+
       # Log in once — credentials persist in ~/.azure for all subsequent az steps.
       - name: Azure CLI login
         run: |
           az login --service-principal \
             -u "$ARM_CLIENT_ID" -p "$ARM_CLIENT_SECRET" \
             --tenant "$ARM_TENANT_ID" --output none
- 
+
       # If a previous run failed mid-way, the resource group may already exist
       # in Azure but not in Terraform state. We delete it so Terraform starts clean.
       - name: Clean up existing resource group (if any)
@@ -88,7 +86,7 @@ jobs:
           RG_NAME=$(grep 'resource_group_name' terraform/terraform.tfvars \
             | head -1 | cut -d'"' -f2)
           RG_NAME=${RG_NAME:-llm-eval-rg}
- 
+
           if az group exists --name "$RG_NAME" --subscription "$ARM_SUBSCRIPTION_ID" \
               | grep -q true; then
             echo "Found existing resource group '$RG_NAME' — deleting for clean deploy..."
@@ -104,12 +102,12 @@ jobs:
           else
             echo "No existing resource group — clean deploy."
           fi
- 
+
       - name: Terraform Plan
         if: ${{ github.event.inputs.destroy != 'true' }}
         working-directory: terraform
         run: terraform plan -out=tfplan
- 
+
       - name: Terraform Apply (or Destroy)
         working-directory: terraform
         run: |
@@ -118,7 +116,7 @@ jobs:
           else
             terraform apply -auto-approve tfplan
           fi
- 
+
       - name: Extract VM IP and SSH key from Terraform
         if: ${{ github.event.inputs.destroy != 'true' }}
         working-directory: terraform
@@ -128,26 +126,42 @@ jobs:
           # Extract the auto-generated private key — no SSH secret needed
           terraform output -raw private_key_pem > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
- 
+
       # ── Docker deploy ────────────────────────────────────────────────────────
       - name: Write .env file
         if: ${{ github.event.inputs.destroy != 'true' }}
         run: |
           echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" > .env
           echo "HF_TOKEN=${{ secrets.HF_TOKEN }}"            >> .env
- 
+
       - name: Install rsync
         if: ${{ github.event.inputs.destroy != 'true' }}
         run: sudo apt-get install -y rsync
- 
-      - name: Add VM to known hosts
+
+      # Wait for the VM to finish booting and start SSH before we try to use it.
+      # A freshly-created Azure VM is not reachable on port 22 for ~30-60s, so we
+      # retry ssh-keyscan until it returns a host key (or give up after 5 min).
+      - name: Wait for SSH and add VM to known hosts
         if: ${{ github.event.inputs.destroy != 'true' }}
-        run: ssh-keyscan -H ${{ steps.get_ip.outputs.vm_ip }} >> ~/.ssh/known_hosts
- 
+        run: |
+          VM_IP="${{ steps.get_ip.outputs.vm_ip }}"
+          echo "Waiting for SSH to come up on $VM_IP ..."
+          for i in $(seq 1 30); do
+            if ssh-keyscan -T 5 "$VM_IP" 2>/dev/null | grep -q .; then
+              ssh-keyscan -H "$VM_IP" >> ~/.ssh/known_hosts 2>/dev/null
+              echo "SSH is up — host key added for $VM_IP"
+              exit 0
+            fi
+            echo "  not ready yet (attempt $i/30) — retrying in 10s..."
+            sleep 10
+          done
+          echo "::error::SSH never became reachable on $VM_IP after 5 minutes."
+          exit 1
+
       - name: Deploy with Docker
         if: ${{ github.event.inputs.destroy != 'true' }}
         run: bash deploy/docker_deploy.sh ${{ steps.get_ip.outputs.vm_ip }}
- 
+
       - name: Upload evaluation results
         if: ${{ github.event.inputs.destroy != 'true' }}
         uses: actions/upload-artifact@v4
@@ -157,4 +171,3 @@ jobs:
             outputs/*.csv
             outputs/meyar.db
           retention-days: 30
- 
