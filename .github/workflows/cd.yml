@@ -26,8 +26,8 @@ jobs:
       ARM_CLIENT_SECRET:   ${{ secrets.AZURE_CLIENT_SECRET }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
-      # TF_VAR_location and TF_VAR_vm_size are set dynamically
-      # by the "Find available region + VM size" step below.
+      # Location and VM size come from terraform/terraform.tfvars
+      # (single source of truth).
       # Opt into Node 24 ahead of the June 16, 2026 default switch
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
@@ -77,62 +77,6 @@ jobs:
           az login --service-principal \
             -u "$ARM_CLIENT_ID" -p "$ARM_CLIENT_SECRET" \
             --tenant "$ARM_TENANT_ID" --output none
-
-      # Find the first region + SKU that this subscription can actually use.
-      # az vm list-skus (no --all) already omits subscription-blocked SKUs.
-      # We grep for the SKU name — if it appears in output, it's usable.
-      - name: Find available region + VM size
-        if: ${{ github.event.inputs.destroy != 'true' }}
-        run: |
-          # REGIONS=(westus2 eastus2 westus eastus centralus northcentralus southcentralus westeurope northeurope)
-          REGIONS = (eastasia)
-          SKUS = (Standard_B1s)
-
-          # Candidates ordered by reliability on free-trial subscriptions.
-          # Includes 2-vCPU / 16 GB E-series (memory-optimized) since 4-vCPU
-          # SKUs are often blocked even when core quota allows them.
-          # SKUS=(
-            # Standard_E2s_v5   Standard_E2as_v5
-            # Standard_E2s_v4   Standard_E2as_v4
-            # Standard_E2ds_v5  Standard_E2ds_v4
-            # Standard_B4ms
-            # Standard_D4as_v5  Standard_D4s_v5
-            # Standard_D4as_v4  Standard_D4s_v4
-            # Standard_D4_v3    Standard_D4s_v3
-            # Standard_B2ms
-            # Standard_D2as_v5  Standard_D2s_v5
-            # Standard_D2as_v4  Standard_D2s_v4
-          # )
-
-          CHOSEN_LOC=""
-          CHOSEN_SKU=""
-
-          # Debug: show what's available in first region
-          echo "=== Available VM SKUs in westus2 (sample) ==="
-          az vm list-skus --location westus2 --output tsv 2>/dev/null \
-            | awk -F'\t' '{print $1}' | grep -E "Standard_[BDE][248]" | sort -u | head -30 || true
-          echo "=============================================="
-
-          for LOC in "${REGIONS[@]}"; do
-            for SKU in "${SKUS[@]}"; do
-              RESULT=$(az vm list-skus --location "$LOC" --size "$SKU" \
-                --output tsv 2>/dev/null | grep -c "$SKU" || true)
-              if [ "$RESULT" -gt "0" ]; then
-                echo "✓ Found: $SKU in $LOC"
-                CHOSEN_LOC="$LOC"
-                CHOSEN_SKU="$SKU"
-                break 2
-              fi
-            done
-          done
-
-          if [ -z "$CHOSEN_LOC" ]; then
-            echo "::error::No usable VM SKU found. Check the debug output above for what your subscription supports."
-            exit 1
-          fi
-
-          echo "TF_VAR_location=$CHOSEN_LOC" >> $GITHUB_ENV
-          echo "TF_VAR_vm_size=$CHOSEN_SKU"  >> $GITHUB_ENV
 
       # If a previous run failed mid-way, the resource group may already exist
       # in Azure but not in Terraform state. We delete it so Terraform starts clean.
@@ -194,9 +138,25 @@ jobs:
         if: ${{ github.event.inputs.destroy != 'true' }}
         run: sudo apt-get install -y rsync
 
-      - name: Add VM to known hosts
+      # Wait for the VM to finish booting and start SSH before we try to use it.
+      # A freshly-created Azure VM is not reachable on port 22 for ~30-60s, so we
+      # retry ssh-keyscan until it returns a host key (or give up after 5 min).
+      - name: Wait for SSH and add VM to known hosts
         if: ${{ github.event.inputs.destroy != 'true' }}
-        run: ssh-keyscan -H ${{ steps.get_ip.outputs.vm_ip }} >> ~/.ssh/known_hosts
+        run: |
+          VM_IP="${{ steps.get_ip.outputs.vm_ip }}"
+          echo "Waiting for SSH to come up on $VM_IP ..."
+          for i in $(seq 1 30); do
+            if ssh-keyscan -T 5 "$VM_IP" 2>/dev/null | grep -q .; then
+              ssh-keyscan -H "$VM_IP" >> ~/.ssh/known_hosts 2>/dev/null
+              echo "SSH is up — host key added for $VM_IP"
+              exit 0
+            fi
+            echo "  not ready yet (attempt $i/30) — retrying in 10s..."
+            sleep 10
+          done
+          echo "::error::SSH never became reachable on $VM_IP after 5 minutes."
+          exit 1
 
       - name: Deploy with Docker
         if: ${{ github.event.inputs.destroy != 'true' }}
