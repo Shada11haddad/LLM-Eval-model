@@ -45,7 +45,7 @@ rsync -avz \
 echo ">>> [3/4] Building Docker image on VM and starting containers..."
 ssh -o StrictHostKeyChecking=no $ADMIN_USER@$VM_IP "
   cd $REMOTE_DIR
-  sudo docker compose up --build
+  sudo docker compose run --rm --build app
 "
 
 # ── Step 4: Download results ──────────────────────────────────────────────────
