@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
 
   # Ollama — serves DeepSeek R1 7B and Llama 3.2
@@ -11,10 +9,12 @@ services:
       - ollama_data:/root/.ollama   # persists downloaded models between runs
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434"]
+      # The ollama image has no curl/wget, so check health via its own CLI.
+      test: ["CMD", "ollama", "list"]
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 20s
 
   # Pull models into Ollama before the app runs
   ollama-init:
