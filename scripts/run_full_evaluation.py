@@ -18,26 +18,12 @@ from src.evaluation.judge_tqa import judge_truthfulqa_answers
 from src.evaluation.parse_verdict import parse_judge_verdict
 from src.evaluation.metrics import metrics_tracker, totals, get_current_metrics
 from src.utils.helpers import polite_sleep, model_summary
-from src.storage.database import create_run, save_results, finish_run
 
 
 def main():
     print("="*60)
     print("LLM Evaluation Platform - Full Batch Evaluation")
     print("="*60)
-
-    # Register this run in the SQLite database
-    run_id = create_run(
-        deepseek_model=cfg.DEEPSEEK_MODEL,
-        llama_model=cfg.LLAMA_MODEL,
-        judge_model=cfg.JUDGE_MODEL,
-        embedding_model=cfg.EMBEDDING_MODEL,
-        chunk_size=cfg.CHUNK_SIZE,
-        chunk_overlap=cfg.CHUNK_OVERLAP,
-        num_rag_questions=cfg.NUM_RAG_QUESTIONS,
-        num_tqa_questions=cfg.NUM_TQA_QUESTIONS,
-    )
-    print(f"Run #{run_id} registered in {cfg.DB_PATH}")
     
    
     truthfulqa = load_truthfulqa()
@@ -99,8 +85,7 @@ def main():
     
     df_rag = pd.DataFrame(rag_rows)
     df_rag.to_csv(f"{cfg.OUTPUTS_DIR}/rag_evaluation.csv", index=False)
-    save_results(df_rag, "rag_results", run_id)
-    print(f" Saved RAG evaluation ({len(df_rag)} rows) → CSV + SQLite")
+    print(f" Saved RAG evaluation ({len(df_rag)} rows)")
     
     # 5
     N_TQA = min(cfg.NUM_TQA_QUESTIONS, len(truthfulqa))
@@ -131,9 +116,7 @@ def main():
     
     df_tqa = pd.DataFrame(tqa_rows)
     df_tqa.to_csv(f"{cfg.OUTPUTS_DIR}/tqa_evaluation.csv", index=False)
-    save_results(df_tqa, "tqa_results", run_id)
-    finish_run(run_id)
-    print(f" Saved TruthfulQA evaluation ({len(df_tqa)} rows) → CSV + SQLite")
+    print(f" Saved TruthfulQA evaluation ({len(df_tqa)} rows)")
     
     # 6
     print("\n"+"="*60)
@@ -143,7 +126,7 @@ def main():
     print(f"TQA: {model_summary(df_tqa, 'deepseek')}")
     print(f"Total cost (including judge): ${totals['cost_usd']:.4f}")
     print(f"Embedding cost: ${embedding_cost:.4f}")
-    print(f"✅ Done. Outputs saved in '{cfg.OUTPUTS_DIR}' (run #{run_id} in {cfg.DB_PATH})")
+    print(f"✅ Done. Outputs saved in '{cfg.OUTPUTS_DIR}'")
 
 if __name__=="__main__":
         main()
