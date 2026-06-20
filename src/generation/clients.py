@@ -1,36 +1,54 @@
 import os
-from langchain_ollama import ChatOllama
-from openai import OpenAI
+from langchain_openai import ChatOpenAI
+from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 from dotenv import load_dotenv
+from config import cfg
 
 load_dotenv()
 
-# OLLAMA_HOST defaults to localhost (local dev); Docker sets it to http://ollama:11434
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+# How long to wait on a single model/judge call before giving up (seconds).
+# Healthy calls finish in a few seconds, so 60s only ever trips on a stuck call.
+REQUEST_TIMEOUT = 60
+# Retries for transient blips (e.g. a dropped connection). Worst-case wait on a
+# truly stuck call stays bounded at ~REQUEST_TIMEOUT * (1 + MAX_RETRIES).
+MAX_RETRIES = 2
 
-deepseek_client = ChatOllama(
-    model="deepseek-r1:7b",
-    temperature=0,
-    base_url=OLLAMA_HOST,
-    timeout=120
-)
 
-llama_client = ChatOllama(
-    model="llama3.2",
-    temperature=0,
-    base_url=OLLAMA_HOST,
-    timeout=60
-)
+def get_model_client(model_key: str):
+    """
+    model_key: 'deepseek', 'llama', 'qwen', 'gpt4o', 'judge'
+    """
+    model_info = cfg.MODELS.get(model_key)
+    if not model_info:
+        raise ValueError(f"Model {model_key} not found in config.MODELS")
 
-# ------------------------------
-# 3. عميل الحكم (Judge) - كما هو
-# ------------------------------
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-judge_client = OpenAI(api_key=OPENAI_API_KEY)
+    provider = model_info["provider"]
+    model_name = model_info["model"]
 
-# ------------------------------
-# 4. أسماء النماذج (للتتبع)
-# ------------------------------
-DEEPSEEK_MODEL = "deepseek-r1:7b"
-LLAMA_MODEL = "llama3.2"
-JUDGE_MODEL = "gpt-5.5"
+    if provider == "openai":
+        return ChatOpenAI(
+            model=model_name,
+            temperature=0,
+            api_key=cfg.OPENAI_API_KEY,
+            timeout=REQUEST_TIMEOUT,
+            max_retries=MAX_RETRIES,
+        )
+    elif provider == "huggingface":
+        llm = HuggingFaceEndpoint(
+            repo_id=model_name,
+            provider=model_info.get("hf_provider", "auto"),
+            huggingfacehub_api_token=cfg.HF_TOKEN,
+            max_new_tokens=512,
+            temperature=0.01,
+            timeout=REQUEST_TIMEOUT,
+        )
+        return ChatHuggingFace(llm=llm)
+    else:
+        raise ValueError(f"Unknown provider {provider}")
+
+
+judge_client = get_model_client("judge")
+
+
+def get_all_models():
+    return list(cfg.MODELS.keys())
