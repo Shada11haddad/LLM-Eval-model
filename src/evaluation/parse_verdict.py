@@ -1,18 +1,47 @@
 import re
+from config import cfg
 
-def parse_judge_verdict(verdict: str) -> dict:
-    out = {}
-    for model_label in ["DeepSeek", "Llama"]:
-        pattern = rf"{model_label}:\s*\n(.*?)(?=\n(?:DeepSeek|Llama|Winner):|\Z)"
-        m = re.search(pattern, verdict, re.DOTALL)
-        if not m: continue
-        for line in m.group(1).strip().split("\n"):
-            if ":" in line:
-                key, val = line.split(":", 1)
-                key = key.strip().lower().replace(" ", "_")
-                out[f"{model_label.lower()}_{key}"] = val.strip()
-    winner_m = re.search(r"Winner:\s*(.+?)(?:\n|$)", verdict)
-    if winner_m: out["winner"] = winner_m.group(1).strip()
-    reason_m = re.search(r"Reason:\s*(.+)", verdict, re.DOTALL)
-    if reason_m: out["reason"] = reason_m.group(1).strip()
-    return out
+
+def parse_judge_verdict(verdict: str):
+
+    results = {}
+
+    for model_name in cfg.MODELS.keys():
+
+        pattern = (
+            rf"{model_name.upper()}:\s*\n"
+            rf"(.*?)(?=\n[A-Z0-9_]+:|\nWinner:|\Z)")
+
+        match = re.search(pattern,verdict,re.DOTALL)
+
+        if not match:
+            continue
+
+        section = match.group(1)
+
+        for line in section.split("\n"):
+
+            if ":" not in line:
+                continue
+
+            key, value = line.split(":", 1)
+
+            key = (key.strip().lower().replace(" ", "_"))
+
+            value = value.strip()
+
+            try:
+                value = float(value) 
+            except:
+                pass
+
+            results[
+                f"{model_name}_{key}"
+            ] = value
+
+    winner_match = re.search(r"Winner:\s*(.+)",verdict)
+
+    if winner_match:
+        results["winner"] = (winner_match.group(1).strip())
+
+    return results

@@ -1,132 +1,89 @@
-import sys
+"""
+run_full_evaluation.py — local runner for the NEW (upload-driven) pipeline.
+
+This replaces the old hardcoded DeepSeek-vs-Llama script. It calls the new
+run_evaluation() entrypoint on one or more dataset files.
+
+Usage:
+    python scripts/run_full_evaluation.py
+    python scripts/run_full_evaluation.py data/raw/agriculture_qa.csv
+    python scripts/run_full_evaluation.py data/raw/doc.pdf llama qwen
+"""
+
 import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sys
+
+# Make the project root importable (config.py, src/, storage/ all live there)
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
 
 import pandas as pd
-import numpy as np
-from tqdm import tqdm
-from config import cfg
-from src.ingestion.loader import load_truthfulqa, load_podcast_transcript
-from src.ingestion.chunker import chunk_documents
-from langchain_core.documents import Document
-from src.retrieval.vectorstore import build_embeddings_and_index, load_vectorstore
-from src.retrieval.retriever import retrieve, build_rag_prompt
-from src.generation.deepseek import ask_deepseek
-from src.generation.llama import ask_llama
-from src.evaluation.judge_rag import judge_rag_answers
-from src.evaluation.judge_tqa import judge_truthfulqa_answers
-from src.evaluation.parse_verdict import parse_judge_verdict
-from src.evaluation.metrics import metrics_tracker, totals, get_current_metrics
-from src.utils.helpers import polite_sleep, model_summary
+from src.evaluation.run_eval import run_evaluation
+
+
+# ─────────────────────────────────────────────────────────────
+# EDIT THESE
+# ─────────────────────────────────────────────────────────────
+
+# Datasets to evaluate. Each one runs as its own evaluation.
+#   .csv / .xlsx  (with "question" + "answer" columns)  -> open_qa track
+#   .txt / .pdf / .docx                                 -> rag track
+DATASETS = [
+    "data/raw/agriculture_qa.csv",
+    "data/raw/truthfulqa.csv",
+    "data/raw/sample_doc.txt",
+
+]
+
+# Models to compare. Any keys from cfg.MODELS EXCEPT "judge".
+# e.g. "deepseek", "llama", "qwen", "gpt4o"
+SELECTED_MODELS = ["llama", "qwen", "gpt4o", "deepseek"]
+
+# ─────────────────────────────────────────────────────────────
 
 
 def main():
-    print("="*60)
-    print("LLM Evaluation Platform - Full Batch Evaluation")
-    print("="*60)
-    
-   
-    truthfulqa = load_truthfulqa()
-    podcast_text = load_podcast_transcript()
-    
-    
-    docs = [Document(page_content=podcast_text)]
-    chunks = chunk_documents(docs)
-    try:
-        index, chunks = load_vectorstore()
-        embedding_cost = 0.0
-    except (FileNotFoundError, RuntimeError):
-        index, chunks, _, embedding_cost = build_embeddings_and_index(chunks)
-    
-    
-    podcast_questions = pd.DataFrame({"question": [
-        "What is the Acquired podcast about?",
-        "What is NVIDIA's CUDA platform?",
-        "How did Apple build its supply chain in China?",
-        "What made TSMC dominant?",
-        "Why did Disney acquire Pixar?",
-        "How did Netflix transition to streaming?",
-        "What is Costco's business model?",
-        "How did Walmart expand into e-commerce?",
-        "What is Berkshire Hathaway's philosophy?",
-        "How did Spotify disrupt music?",
-    ]})
-    
-   # 4
-    N_RAG = min(cfg.NUM_RAG_QUESTIONS, len(podcast_questions))
-    sampled_rag = podcast_questions.sample(n=N_RAG).reset_index(drop=True)
-    rag_rows = []
-    
-    print(f"\n🔍 Evaluating {N_RAG} RAG questions...")
-    for idx, row in tqdm(sampled_rag.iterrows(), total=N_RAG):
-        q = row["question"]
-        # Retrieve
-        retrieved = retrieve(q, index, chunks, k=3)
-        context_chunks = [r["chunk"] for r in retrieved]
-        context = "\n\n".join(context_chunks)
-        prompt = build_rag_prompt(q, context_chunks)
-        # Generate
-        ds_ans = ask_deepseek(prompt)
-        polite_sleep()
-        ds_m = get_current_metrics(cfg.DEEPSEEK_MODEL)
-        ll_ans = ask_llama(prompt)
-        polite_sleep()
-        ll_m = get_current_metrics(cfg.LLAMA_MODEL)
-        # Judge
-        verdict = judge_rag_answers(q, context, ds_ans, ll_ans, ds_m, ll_m)
-        parsed = parse_judge_verdict(verdict)
-        rag_rows.append({"question": q, "context": context[:300],
-                         "deepseek_answer": ds_ans, "deepseek_latency_s": ds_m.get("latency_s", 0),
-                         "deepseek_cost_usd": ds_m.get("cost_usd", 0),
-                         "llama_answer": ll_ans, "llama_latency_s": ll_m.get("latency_s", 0),
-                         "llama_cost_usd": ll_m.get("cost_usd", 0),
-                         "judge_verdict": verdict, **parsed})
-        polite_sleep()
-    
-    df_rag = pd.DataFrame(rag_rows)
-    df_rag.to_csv(f"{cfg.OUTPUTS_DIR}/rag_evaluation.csv", index=False)
-    print(f" Saved RAG evaluation ({len(df_rag)} rows)")
-    
-    # 5
-    N_TQA = min(cfg.NUM_TQA_QUESTIONS, len(truthfulqa))
-    sampled_tqa = truthfulqa.sample(n=N_TQA).reset_index()
-    tqa_rows = []
-    
-    print(f"\n Evaluating {N_TQA} TruthfulQA questions...")
-    for idx, row in tqdm(sampled_tqa.iterrows(), total=N_TQA):
-        q = row["Question"]
-        ds_ans = ask_deepseek(q)
-        polite_sleep()
-        ds_m = get_current_metrics(cfg.DEEPSEEK_MODEL)
-        ll_ans = ask_llama(q)
-        polite_sleep()
-        ll_m = get_current_metrics(cfg.LLAMA_MODEL)
-        verdict = judge_truthfulqa_answers(
-            q, row["Best Answer"], row["Correct Answers"],
-            row["Incorrect Answers"], ds_ans, ll_ans, ds_m, ll_m
-        )
-        parsed = parse_judge_verdict(verdict)
-        tqa_rows.append({"question": q, "best_answer": row["Best Answer"],
-                         "deepseek_answer": ds_ans, "deepseek_latency_s": ds_m.get("latency_s", 0),
-                         "deepseek_cost_usd": ds_m.get("cost_usd", 0),
-                         "llama_answer": ll_ans, "llama_latency_s": ll_m.get("latency_s", 0),
-                         "llama_cost_usd": ll_m.get("cost_usd", 0),
-                         "judge_verdict": verdict, **parsed})
-        polite_sleep()
-    
-    df_tqa = pd.DataFrame(tqa_rows)
-    df_tqa.to_csv(f"{cfg.OUTPUTS_DIR}/tqa_evaluation.csv", index=False)
-    print(f" Saved TruthfulQA evaluation ({len(df_tqa)} rows)")
-    
-    # 6
-    print("\n"+"="*60)
-    print("📊 FINAL SUMMARY")
-    print("="*60)
-    print(f"RAG: {model_summary(df_rag, 'deepseek')}")
-    print(f"TQA: {model_summary(df_tqa, 'deepseek')}")
-    print(f"Total cost (including judge): ${totals['cost_usd']:.4f}")
-    print(f"Embedding cost: ${embedding_cost:.4f}")
-    print(f"✅ Done. Outputs saved in '{cfg.OUTPUTS_DIR}'")
+    # Optional command-line override:
+    #   python scripts/run_full_evaluation.py <file> [model1 model2 ...]
+    datasets = DATASETS
+    models = SELECTED_MODELS
+    if len(sys.argv) >= 2:
+        datasets = [sys.argv[1]]
+    if len(sys.argv) >= 3:
+        models = sys.argv[2:]
 
-if __name__=="__main__":
-        main()
+    print("=" * 60)
+    print("LLM Evaluation — Full Run")
+    print(f"Models: {models}")
+    print("=" * 60)
+
+    for file_path in datasets:
+        print(f"\n>>> Dataset: {file_path}")
+
+        if not os.path.exists(file_path):
+            print("    SKIPPED — file not found. Add it or fix the path above.")
+            continue
+
+        try:
+            result = run_evaluation(file_path, models)
+        except Exception as e:
+            print(f"    FAILED: {type(e).__name__}: {e}")
+            continue
+
+        print(f"    Run ID    : {result['run_id']}")
+        print(f"    Task type : {result['task_type']}")
+        print(f"    Rows      : {len(result['results'])}")
+        print(f"    Total cost: ${result['total_cost_usd']:.4f}")
+
+        comp = pd.DataFrame(result["comparison_table"])
+        if not comp.empty:
+            print("\n    Comparison table:")
+            print(comp.to_string(index=False))
+
+    print("\n" + "=" * 60)
+    print("Done. Results saved to SQLite (outputs/meyar.db).")
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    main()

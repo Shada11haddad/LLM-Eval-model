@@ -6,46 +6,75 @@ Via Docker:      docker compose up  (api service auto-starts)
 
 Endpoints
 ---------
-GET  /health                    — is the API alive?
-GET  /status                    — are Ollama + models ready?
-GET  /runs                      — list all evaluation runs
-GET  /runs/{run_id}             — metadata for one run
-GET  /results/rag               — RAG results (all runs, or ?run_id=N)
-GET  /results/tqa               — TQA results (all runs, or ?run_id=N)
-GET  /results/summary           — win counts + avg latency
-GET  /db/info                   — DB file path, size, table row counts
-GET  /db/download               — download the raw meyar.db SQLite file
-POST /evaluate                  — trigger a new evaluation run (async)
-GET  /evaluate/status/{run_id}  — check if a triggered run has finished
+GET  /health                        — liveness check
+GET  /status                        — check OpenAI + HF connectivity
+GET  /models                        — list available models for Streamlit UI
+
+POST /upload                        — upload a dataset or document file
+POST /evaluate                      — trigger evaluation (file_path, models, prompt)
+GET  /evaluate/status/{token_id}    — poll evaluation progress
+
+GET  /runs                          — list all evaluation runs (most recent first)
+GET  /runs/{run_id}                 — metadata for one run
+
+GET  /results/rag?run_id=N          — RAG evaluation results
+GET  /results/open_qa?run_id=N      — Open QA evaluation results
+GET  /results/summary?run_id=N      — win counts + avg latency per model
+
+GET  /db/info                       — DB file path, size, table row counts
+GET  /db/download                   — download the raw meyar.db SQLite file
 """
 
 import os
 import sys
-import urllib.request
-from typing import Optional
+import shutil
+import sqlite3
+from typing import Optional, List
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, BackgroundTasks, HTTPException, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
+from pydantic import BaseModel
 
-from src.storage.database import list_runs, load_results, get_connection, init_db
+from config import cfg
+from src.storage.database import list_runs, load_results, init_db
 
 app = FastAPI(
     title="LLM Evaluation API",
-    description="Query results and trigger evaluations for DeepSeek-R1:7b vs Llama3.2",
-    version="1.0.0",
+    description="Run and query LLM evaluations. Designed to be consumed by a Streamlit frontend.",
+    version="2.0.0",
 )
 
-# Track background evaluation runs: run_id -> "running" | "done" | "error:<msg>"
+# ── CORS ───────────────────────────────────────────────────────────────────────
+# Allow Streamlit (any origin) to call this API.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],          # tighten to your Streamlit URL in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Track background evaluation runs: token_id -> "running" | "done" | "error:<msg>"
 _eval_status: dict[int, str] = {}
+_eval_results: dict[int, dict] = {}   # store lightweight result summary per token
+
+
+# ── Pydantic request models ────────────────────────────────────────────────────
+
+class EvaluateRequest(BaseModel):
+    file_path: str                       # path returned by POST /upload
+    selected_models: List[str]           # e.g. ["deepseek", "llama"]
+    prompt_template: Optional[str] = None  # custom prompt; None = use default
 
 
 # ── Health ─────────────────────────────────────────────────────────────────────
 
 @app.get("/health", tags=["system"])
 def health():
-    """Simple liveness check — returns 200 if the API is up."""
+    """Simple liveness check — returns 200 if the API process is running."""
     return {"status": "ok"}
 
 
@@ -54,40 +83,175 @@ def health():
 @app.get("/status", tags=["system"])
 def status():
     """
-    Check whether Ollama is reachable and both models are available.
+    Check whether the external model providers are reachable.
+    Returns provider availability without making a full inference call.
     """
-    ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    import httpx
 
-    # Is Ollama reachable?
-    try:
-        urllib.request.urlopen(f"{ollama_host}/api/tags", timeout=5)
-        ollama_ok = True
-    except Exception as e:
-        return JSONResponse(
-            status_code=503,
-            content={"ollama": "unreachable", "error": str(e)},
+    results = {}
+
+    # OpenAI
+    openai_key = cfg.OPENAI_API_KEY
+    if openai_key:
+        try:
+            r = httpx.get(
+                "https://api.openai.com/v1/models",
+                headers={"Authorization": f"Bearer {openai_key}"},
+                timeout=5,
+            )
+            results["openai"] = "ok" if r.status_code == 200 else f"error {r.status_code}"
+        except Exception as e:
+            results["openai"] = f"unreachable: {e}"
+    else:
+        results["openai"] = "no API key configured"
+
+    # HuggingFace
+    hf_token = cfg.HF_TOKEN
+    if hf_token:
+        try:
+            r = httpx.get(
+                "https://huggingface.co/api/whoami",
+                headers={"Authorization": f"Bearer {hf_token}"},
+                timeout=5,
+            )
+            results["huggingface"] = "ok" if r.status_code == 200 else f"error {r.status_code}"
+        except Exception as e:
+            results["huggingface"] = f"unreachable: {e}"
+    else:
+        results["huggingface"] = "no HF token configured"
+
+    return results
+
+
+# ── Models ─────────────────────────────────────────────────────────────────────
+
+@app.get("/models", tags=["system"])
+def get_models():
+    """
+    List all models available for evaluation (excludes the judge model).
+    Streamlit uses this to populate the model-selection widget.
+    """
+    return {
+        name: info
+        for name, info in cfg.MODELS.items()
+        if name != "judge"
+    }
+
+
+# ── File upload ────────────────────────────────────────────────────────────────
+
+UPLOAD_DIR = os.path.join(cfg.OUTPUTS_DIR, "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+@app.post("/upload", tags=["evaluation"])
+async def upload_file(file: UploadFile = File(...)):
+    """
+    Upload a dataset (.csv, .json, .jsonl) or document (.pdf, .docx, .txt, .xlsx).
+    Returns the saved file path — pass it to POST /evaluate as `file_path`.
+    """
+    # Must match what detect_task_type / load_document / load_qa_dataset support
+    allowed = {".csv", ".xlsx", ".pdf", ".docx", ".txt"}
+    ext = os.path.splitext(file.filename)[-1].lower()
+    if ext not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{ext}'. Allowed: {', '.join(sorted(allowed))}",
         )
 
-    # Which models are loaded?
-    try:
-        import json
-        with urllib.request.urlopen(f"{ollama_host}/api/tags", timeout=5) as r:
-            data = json.loads(r.read())
-        available = [m["name"] for m in data.get("models", [])]
-    except Exception:
-        available = []
+    dest = os.path.join(UPLOAD_DIR, file.filename)
+    with open(dest, "wb") as f:
+        shutil.copyfileobj(file.file, f)
 
-    deepseek_ready = any("deepseek" in m for m in available)
-    llama_ready    = any("llama"    in m for m in available)
+    return {"filename": file.filename, "file_path": dest, "size_bytes": os.path.getsize(dest)}
+
+
+# ── Trigger evaluation ─────────────────────────────────────────────────────────
+
+def _background_evaluation(token_id: int, file_path: str, selected_models: list, prompt_template: Optional[str]):
+    """Run evaluation in a background thread and record outcome."""
+    from src.evaluation.run_eval import run_evaluation
+    try:
+        result = run_evaluation(
+            file_path=file_path,
+            selected_models=selected_models,
+            prompt_template=prompt_template,
+        )
+        _eval_results[token_id] = {
+            "run_id": result["run_id"],
+            "task_type": result["task_type"],
+            "table_name": result["table_name"],
+            "total_cost_usd": result["total_cost_usd"],
+        }
+        _eval_status[token_id] = "done"
+    except Exception as e:
+        _eval_status[token_id] = f"error: {e}"
+
+
+@app.post("/evaluate", tags=["evaluation"], status_code=202)
+def trigger_evaluation(request: EvaluateRequest, background_tasks: BackgroundTasks):
+    """
+    Start a new evaluation run in the background.
+
+    Body:
+        file_path       — path returned by POST /upload
+        selected_models — list of model keys, e.g. ["deepseek", "llama", "qwen"]
+        prompt_template — optional custom prompt string
+
+    Returns immediately with a token_id.
+    Poll GET /evaluate/status/{token_id} until status is "done".
+    """
+    if not request.selected_models:
+        raise HTTPException(status_code=400, detail="selected_models cannot be empty")
+
+    invalid = [m for m in request.selected_models if m not in cfg.MODELS or m == "judge"]
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown or reserved model(s): {invalid}. Available: {list(cfg.MODELS.keys())}",
+        )
+
+    if not os.path.exists(request.file_path):
+        raise HTTPException(status_code=400, detail=f"file_path not found: {request.file_path}")
+
+    token_id = len(_eval_status) + 1
+    _eval_status[token_id] = "running"
+
+    background_tasks.add_task(
+        _background_evaluation,
+        token_id,
+        request.file_path,
+        request.selected_models,
+        request.prompt_template,
+    )
 
     return {
-        "ollama": "ok" if ollama_ok else "unreachable",
-        "models": {
-            "deepseek-r1:7b": "ready" if deepseek_ready else "not loaded",
-            "llama3.2":       "ready" if llama_ready    else "not loaded",
-        },
-        "available_models": available,
+        "message": "Evaluation started",
+        "token_id": token_id,
+        "poll": f"/evaluate/status/{token_id}",
     }
+
+
+@app.get("/evaluate/status/{token_id}", tags=["evaluation"])
+def evaluation_status(token_id: int):
+    """
+    Poll the status of a triggered evaluation.
+
+    Returns:
+        status   — "running" | "done" | "error: <message>"
+        result   — summary dict (only present when status == "done")
+    """
+    if token_id not in _eval_status:
+        raise HTTPException(status_code=404, detail=f"Unknown token_id: {token_id}")
+
+    st = _eval_status[token_id]
+    resp: dict = {"token_id": token_id, "status": st}
+
+    if st == "done":
+        resp["result"] = _eval_results.get(token_id, {})
+        resp["results_at"] = "/results/rag or /results/open_qa"
+
+    return resp
 
 
 # ── Runs ───────────────────────────────────────────────────────────────────────
@@ -121,10 +285,7 @@ def get_run(run_id: int):
 
 @app.get("/results/rag", tags=["results"])
 def get_rag_results(run_id: Optional[int] = None):
-    """
-    RAG evaluation results.
-    Pass ?run_id=N to filter to a specific run.
-    """
+    """RAG evaluation results. Pass ?run_id=N to filter to a specific run."""
     try:
         df = load_results("rag_results", run_id)
         return df.to_dict(orient="records")
@@ -132,14 +293,11 @@ def get_rag_results(run_id: Optional[int] = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/results/tqa", tags=["results"])
-def get_tqa_results(run_id: Optional[int] = None):
-    """
-    TruthfulQA evaluation results.
-    Pass ?run_id=N to filter to a specific run.
-    """
+@app.get("/results/open_qa", tags=["results"])
+def get_open_qa_results(run_id: Optional[int] = None):
+    """Open QA evaluation results. Pass ?run_id=N to filter to a specific run."""
     try:
-        df = load_results("tqa_results", run_id)
+        df = load_results("open_qa_results", run_id)
         return df.to_dict(orient="records")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -148,29 +306,43 @@ def get_tqa_results(run_id: Optional[int] = None):
 @app.get("/results/summary", tags=["results"])
 def get_summary(run_id: Optional[int] = None):
     """
-    Win counts and average latency for both models.
-    Covers both RAG and TQA. Pass ?run_id=N to filter.
+    Win counts and average latency for all evaluated models.
+    Covers both RAG and Open QA. Pass ?run_id=N to filter.
     """
-    def summarise(df, label):
+    def _summarise(df):
         if df.empty:
             return {"questions": 0}
-        wins_ds = int(df["winner"].str.lower().str.contains("deepseek", na=False).sum())
-        wins_ll = int(df["winner"].str.lower().str.contains("llama",    na=False).sum())
-        return {
-            "questions": len(df),
-            "deepseek_wins": wins_ds,
-            "llama_wins":    wins_ll,
-            "deepseek_avg_latency_s": round(float(df["deepseek_latency_s"].mean()), 2),
-            "llama_avg_latency_s":    round(float(df["llama_latency_s"].mean()),    2),
+
+        summary = {"questions": len(df)}
+
+        # Count wins per model (winner column contains model name)
+        if "winner" in df.columns:
+            win_counts = df["winner"].str.lower().value_counts().to_dict()
+            summary["wins"] = win_counts
+
+        # Average latency per model (any column ending in _latency_s)
+        latency_cols = [c for c in df.columns if c.endswith("_latency_s")]
+        summary["avg_latency_s"] = {
+            col.replace("_latency_s", ""): round(float(df[col].mean()), 3)
+            for col in latency_cols
         }
+
+        # Total cost per model (any column ending in _cost_usd)
+        cost_cols = [c for c in df.columns if c.endswith("_cost_usd")]
+        summary["total_cost_usd"] = {
+            col.replace("_cost_usd", ""): round(float(df[col].sum()), 6)
+            for col in cost_cols
+        }
+
+        return summary
 
     try:
         rag = load_results("rag_results", run_id)
-        tqa = load_results("tqa_results", run_id)
+        oqa = load_results("open_qa_results", run_id)
         return {
             "run_id": run_id or "all",
-            "rag": summarise(rag, "rag"),
-            "tqa": summarise(tqa, "tqa"),
+            "rag": _summarise(rag),
+            "open_qa": _summarise(oqa),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -180,10 +352,7 @@ def get_summary(run_id: Optional[int] = None):
 
 @app.get("/db/info", tags=["database"])
 def db_info():
-    """
-    Show the SQLite DB file path, size, and row counts per table.
-    """
-    from config import cfg
+    """Show the SQLite DB file path, size, and row counts per table."""
     db_path = cfg.DB_PATH
 
     if not os.path.exists(db_path):
@@ -191,26 +360,18 @@ def db_info():
 
     size_mb = round(os.path.getsize(db_path) / 1024 / 1024, 3)
 
-    import sqlite3
     with sqlite3.connect(db_path) as conn:
         tables = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall()
-        counts = {}
-        for (t,) in tables:
-            row = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()
-            counts[t] = row[0]
+        counts = {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for (t,) in tables}
 
     return {"db_path": db_path, "exists": True, "size_mb": size_mb, "tables": counts}
 
 
 @app.get("/db/download", tags=["database"])
 def db_download():
-    """
-    Download the raw meyar.db SQLite file.
-    Open it locally with DB Browser for SQLite or any SQLite viewer.
-    """
-    from config import cfg
+    """Download the raw meyar.db SQLite file."""
     db_path = cfg.DB_PATH
 
     if not os.path.exists(db_path):
@@ -221,57 +382,3 @@ def db_download():
         filename="meyar.db",
         media_type="application/octet-stream",
     )
-
-
-# ── Trigger evaluation ─────────────────────────────────────────────────────────
-
-def _run_evaluation() -> int:
-    """Run the full evaluation in a background thread. Returns run_id."""
-    import importlib.util, pathlib
-    script = pathlib.Path(__file__).parent.parent.parent / "scripts" / "run_full_evaluation.py"
-    spec = importlib.util.spec_from_file_location("run_full_evaluation", script)
-    mod  = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    mod.main()
-
-
-@app.post("/evaluate", tags=["evaluation"], status_code=202)
-def trigger_evaluation(background_tasks: BackgroundTasks):
-    """
-    Start a new evaluation run in the background.
-    Returns immediately with a placeholder run_id.
-    Poll GET /evaluate/status/{run_id} to check progress.
-    """
-    # We don't know the actual run_id until the script creates it,
-    # so we use a simple thread-level token.
-    token_id = len(_eval_status) + 1
-    _eval_status[token_id] = "running"
-
-    def _job():
-        try:
-            _run_evaluation()
-            _eval_status[token_id] = "done"
-        except Exception as e:
-            _eval_status[token_id] = f"error: {e}"
-
-    background_tasks.add_task(_job)
-
-    return {
-        "message": "Evaluation started",
-        "token_id": token_id,
-        "poll": f"/evaluate/status/{token_id}",
-        "note": "Models download on first run — expect 10-15 min before results appear.",
-    }
-
-
-@app.get("/evaluate/status/{token_id}", tags=["evaluation"])
-def evaluation_status(token_id: int):
-    """Check the status of a triggered evaluation run."""
-    if token_id not in _eval_status:
-        raise HTTPException(status_code=404, detail="Unknown token_id")
-    st = _eval_status[token_id]
-    return {
-        "token_id": token_id,
-        "status": st,
-        "results_at": "/results/rag and /results/tqa" if st == "done" else None,
-    }

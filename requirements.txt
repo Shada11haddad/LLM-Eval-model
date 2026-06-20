@@ -1,16 +1,32 @@
-loguru
+# Core
 python-dotenv
-langchain
-langchain-openai
-langchain-ollama
-langchain-text-splitters
-faiss-cpu
-kagglehub
+loguru
 pandas
-tqdm
-openai
 numpy
-matplotlib
-sentence_transformers
+tqdm
+
+# API
 fastapi
 uvicorn[standard]
+python-multipart    # required for FastAPI file uploads
+httpx               # used in /status endpoint
+
+# LangChain
+langchain
+langchain-core
+langchain-openai
+langchain-community
+langchain-huggingface>=1.0
+langchain-text-splitters
+
+# Inference + retrieval
+openai
+faiss-cpu
+
+# Evaluation (ragas_eval.py targets the 0.4.x API)
+ragas>=0.4.3,<0.5
+
+# Document loaders — needed for PDF / DOCX / XLSX uploads
+pypdf
+docx2txt
+openpyxl

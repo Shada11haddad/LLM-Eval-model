@@ -8,97 +8,216 @@ from config import cfg
 
 
 def get_connection():
-    """Open a connection to the meyar.db SQLite file."""
     db_dir = os.path.dirname(cfg.DB_PATH)
+
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
+
     conn = sqlite3.connect(cfg.DB_PATH)
     conn.execute("PRAGMA foreign_keys = ON")
+
     return conn
 
 
 def init_db():
-    """Create the runs table if it doesn't exist."""
+
     with get_connection() as conn:
+
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS runs (
-                run_id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                started_at        TEXT NOT NULL,
-                finished_at       TEXT,
-                deepseek_model    TEXT,
-                llama_model       TEXT,
-                judge_model       TEXT,
-                embedding_model   TEXT,
-                chunk_size        INTEGER,
-                chunk_overlap     INTEGER,
-                num_rag_questions INTEGER,
-                num_tqa_questions INTEGER,
-                notes             TEXT
-            )
+        CREATE TABLE IF NOT EXISTS runs (
+
+            run_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+
+            dataset_name TEXT,
+            task_type TEXT,
+
+            index_path TEXT,
+            chunks_path TEXT,
+
+            judge_model TEXT,
+            embedding_model TEXT,
+
+            chunk_size INTEGER,
+            chunk_overlap INTEGER,
+
+            num_rag_questions INTEGER,
+            num_tqa_questions INTEGER,
+
+            notes TEXT
+
+        )
         """)
 
+        # Ensure compatibility with older DBs: add any missing columns
+        cur = conn.cursor()
+        cur.execute("PRAGMA table_info('runs')")
+        existing_cols = {row[1] for row in cur.fetchall()}
 
-def create_run(**kwargs):
-    """Insert a new row into `runs` and return its run_id."""
+        required_cols = {
+            "dataset_name": "TEXT",
+            "task_type": "TEXT",
+            "index_path": "TEXT",
+            "chunks_path": "TEXT",
+            "judge_model": "TEXT",
+            "embedding_model": "TEXT",
+            "chunk_size": "INTEGER",
+            "chunk_overlap": "INTEGER",
+            "num_rag_questions": "INTEGER",
+            "num_tqa_questions": "INTEGER",
+            "notes": "TEXT",
+            "finished_at": "TEXT",
+            "started_at": "TEXT",
+        }
+
+        for col, col_type in required_cols.items():
+            if col not in existing_cols:
+                try:
+                    conn.execute(f"ALTER TABLE runs ADD COLUMN {col} {col_type}")
+                except Exception:
+                    # If ALTER fails, ignore — DB will still function for new runs
+                    pass
+
+
+
+def create_run(
+    dataset_name=None,
+    task_type=None,
+    index_path=None,
+    chunks_path=None,
+    judge_model=None,
+    embedding_model=None,
+    chunk_size=None,
+    chunk_overlap=None,
+    num_rag_questions=None,
+    num_tqa_questions=None,
+    notes=None,
+):
+
     init_db()
+
     started_at = datetime.utcnow().isoformat(timespec="seconds")
+
     with get_connection() as conn:
-        cur = conn.execute("""
+
+        cur = conn.execute(
+            """
             INSERT INTO runs (
-                started_at, deepseek_model, llama_model, judge_model,
-                embedding_model, chunk_size, chunk_overlap,
-                num_rag_questions, num_tqa_questions, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            started_at,
-            kwargs.get("deepseek_model"),
-            kwargs.get("llama_model"),
-            kwargs.get("judge_model"),
-            kwargs.get("embedding_model"),
-            kwargs.get("chunk_size"),
-            kwargs.get("chunk_overlap"),
-            kwargs.get("num_rag_questions"),
-            kwargs.get("num_tqa_questions"),
-            kwargs.get("notes"),
-        ))
+
+                started_at,
+
+                dataset_name,
+                task_type,
+
+                index_path,
+                chunks_path,
+
+                judge_model,
+                embedding_model,
+
+                chunk_size,
+                chunk_overlap,
+
+                num_rag_questions,
+                num_tqa_questions,
+
+                notes
+
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                started_at,
+
+                dataset_name,
+                task_type,
+
+                index_path,
+                chunks_path,
+
+                judge_model,
+                embedding_model,
+
+                chunk_size,
+                chunk_overlap,
+
+                num_rag_questions,
+                num_tqa_questions,
+
+                notes,
+            ),
+        )
+
         return cur.lastrowid
 
 
 def finish_run(run_id):
-    """Stamp the run as finished (called after both DataFrames are saved)."""
+
     finished_at = datetime.utcnow().isoformat(timespec="seconds")
+
     with get_connection() as conn:
+
         conn.execute(
-            "UPDATE runs SET finished_at = ? WHERE run_id = ?",
+            """
+            UPDATE runs
+            SET finished_at = ?
+            WHERE run_id = ?
+            """,
             (finished_at, run_id),
         )
 
 
 def save_results(df, table_name, run_id):
-    """Append a DataFrame to `table_name`, tagging every row with run_id.
-    The table is auto-created by pandas on the first write."""
+
     if df is None or len(df) == 0:
         return 0
+
     out = df.copy()
+
     out.insert(0, "run_id", run_id)
+
     with get_connection() as conn:
-        out.to_sql(table_name, conn, if_exists="append", index=False)
+
+        out.to_sql(table_name,conn,if_exists="replace",index=False)
+
     return len(out)
 
 
 def list_runs():
-    """Return every run as a DataFrame (most recent first)."""
+
     init_db()
+
     with get_connection() as conn:
-        return pd.read_sql("SELECT * FROM runs ORDER BY run_id DESC", conn)
+
+        return pd.read_sql(
+            """
+            SELECT *
+            FROM runs
+            ORDER BY run_id DESC
+            """,
+            conn,
+        )
 
 
 def load_results(table_name, run_id=None):
-    """Read evaluation results, optionally filtered to one run."""
+
     with get_connection() as conn:
+
         if run_id is None:
-            return pd.read_sql(f"SELECT * FROM {table_name}", conn)
+
+            return pd.read_sql(
+                f"SELECT * FROM {table_name}",
+                conn,
+            )
+
         return pd.read_sql(
-            f"SELECT * FROM {table_name} WHERE run_id = ?",
-            conn, params=(run_id,),
+            f"""
+            SELECT *
+            FROM {table_name}
+            WHERE run_id = ?
+            """,
+            conn,
+            params=(run_id,),
         )
