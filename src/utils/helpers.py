@@ -4,13 +4,19 @@ from src.evaluation.metrics import latency_label
 
 
 RAG_METRICS = [
+    # GPT-judge metrics
     "faithfulness",
     "relevance",
     "coherence",
     "hallucination",
     "toxicity",
-    "context_precision",
-    "context_recall",
+    
+    # RAGAS metrics (RAG track) — the official RAGAS scores, shown alongside
+    # the judge's so you can compare judge-vs-RAGAS directly.
+    "ragas_faithfulness",
+    "ragas_answer_relevancy",
+    "ragas_context_precision",
+    "ragas_context_recall",
 ]
 
 OPEN_QA_METRICS = [
