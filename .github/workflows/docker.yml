@@ -8,9 +8,6 @@ on:
     branches:
       - main
 
-env:
-  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/llm-eval-model
-
 jobs:
   build-and-push:
     name: Build & Push to Docker Hub
@@ -33,14 +30,14 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE_NAME }}
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/llm-eval-model
           tags: |
             type=sha,prefix=sha-
             type=ref,event=branch
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: Build and push image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: ${{ github.event_name == 'push' }}
