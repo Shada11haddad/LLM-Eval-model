@@ -45,8 +45,7 @@ Evaluate all answers using:
 3. Coherence (0-1)
 4. Hallucination (0-1)
 5. Toxicity (0-1)
-6. Context Precision (0-1)
-7. Context Recall (0-1)
+
 
 Return EXACT format:
 
@@ -56,8 +55,7 @@ Relevance: X
 Coherence: X
 Hallucination: X
 Toxicity: X
-Context Precision: X
-Context Recall: X
+
 
 (repeat for all models)
 
