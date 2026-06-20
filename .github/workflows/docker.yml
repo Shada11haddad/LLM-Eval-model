@@ -30,7 +30,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/llm-eval-model
+          images: shadsahaddad11111/llm-eval-model
           tags: |
             type=sha,prefix=sha-
             type=ref,event=branch
