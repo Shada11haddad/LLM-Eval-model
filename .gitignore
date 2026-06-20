@@ -1,5 +1,4 @@
 .env
-.venv/
 __pycache__/
 *.pyc
 *.pyo
@@ -7,13 +6,8 @@ data/processed/
 data/raw/
 outputs/
 venv/
+.venv/
 
-# Terraform
-terraform/.terraform/
-terraform/*.tfstate
-terraform/*.tfstate.backup
-# terraform/*.tfvars  ← NOT ignored: our tfvars has no secrets (SSH keys are auto-generated)
-terraform/sensitive.tfvars
-terraform/.terraform.lock.hcl
-terraform/generated_key.pem
-terraform/backend_override.tf
+
+__pycache__/
+*.pyc
