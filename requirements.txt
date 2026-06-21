@@ -10,6 +10,8 @@ fastapi
 uvicorn[standard]
 python-multipart    # required for FastAPI file uploads
 httpx               # used in /status endpoint
+streamlit 
+plotly          
 
 # LangChain
 langchain
