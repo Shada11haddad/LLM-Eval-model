@@ -81,17 +81,30 @@ jobs:
         run: |
           az group create \
             --name llm-eval-tfstate-rg \
-            --location westeurope 2>/dev/null || true
+            --location westeurope || true
 
           az storage account create \
             --name llmevaltfstate \
             --resource-group llm-eval-tfstate-rg \
             --location westeurope \
-            --sku Standard_LRS 2>/dev/null || true
+            --sku Standard_LRS
+
+          # Wait until the storage account is fully provisioned
+          echo "Waiting for storage account to be ready..."
+          for i in $(seq 1 10); do
+            STATE=$(az storage account show \
+              --name llmevaltfstate \
+              --resource-group llm-eval-tfstate-rg \
+              --query "provisioningState" -o tsv 2>/dev/null || echo "waiting")
+            echo "  State: $STATE"
+            [ "$STATE" = "Succeeded" ] && break
+            sleep 10
+          done
 
           az storage container create \
             --name tfstate \
-            --account-name llmevaltfstate 2>/dev/null || true
+            --account-name llmevaltfstate \
+            --auth-mode login
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
