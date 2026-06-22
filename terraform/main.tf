@@ -4,28 +4,8 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 3.0"
     }
-    tls = {
-      source  = "hashicorp/tls"
-      version = "~> 4.0"
-    }
-    local = {
-      source  = "hashicorp/local"
-      version = "~> 2.0"
-    }
   }
   required_version = ">= 1.3.0"
-}
-
-# ── SSH Key Pair (auto-generated) ──────────────────────────────
-resource "tls_private_key" "ssh" {
-  algorithm = "RSA"
-  rsa_bits  = 4096
-}
-
-resource "local_sensitive_file" "private_key" {
-  content         = tls_private_key.ssh.private_key_openssh
-  filename        = "${path.module}/generated_key.pem"
-  file_permission = "0600"
 }
 
 provider "azurerm" {
@@ -38,103 +18,234 @@ resource "azurerm_resource_group" "rg" {
   location = var.location
 }
 
-# ── Networking ─────────────────────────────────────────────────
-resource "azurerm_virtual_network" "vnet" {
-  name                = "${var.vm_name}-vnet"
-  address_space       = ["10.0.0.0/16"]
+# ── Log Analytics ──────────────────────────────────────────────
+resource "azurerm_log_analytics_workspace" "logs" {
+  name                = "${var.app_name}-logs"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
+  sku                 = "PerGB2018"
+  retention_in_days   = 30
 }
 
-resource "azurerm_subnet" "subnet" {
-  name                 = "${var.vm_name}-subnet"
+# ═══════════════════════════════════════════════════════════════
+#  NETWORKING
+# ═══════════════════════════════════════════════════════════════
+
+resource "azurerm_virtual_network" "vnet" {
+  name                = "${var.app_name}-vnet"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  address_space       = ["10.0.0.0/16"]
+}
+
+# Dedicated subnet for Application Gateway
+resource "azurerm_subnet" "appgw" {
+  name                 = "appgw-subnet"
   resource_group_name  = azurerm_resource_group.rg.name
   virtual_network_name = azurerm_virtual_network.vnet.name
   address_prefixes     = ["10.0.1.0/24"]
 }
 
-resource "azurerm_public_ip" "pip" {
-  name                = "${var.vm_name}-pip"
+# Subnet for Container Apps Environment (/23 minimum required)
+resource "azurerm_subnet" "container_apps" {
+  name                 = "container-apps-subnet"
+  resource_group_name  = azurerm_resource_group.rg.name
+  virtual_network_name = azurerm_virtual_network.vnet.name
+  address_prefixes     = ["10.0.2.0/23"]
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  APPLICATION GATEWAY  (WAF_v2 — single public IP + WAF)
+# ═══════════════════════════════════════════════════════════════
+
+resource "azurerm_public_ip" "appgw" {
+  name                = "${var.app_name}-appgw-pip"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   allocation_method   = "Static"
   sku                 = "Standard"
-  # zone pinning removed — it was causing SkuNotAvailable on trial subs
 }
 
-resource "azurerm_network_security_group" "nsg" {
-  name                = "${var.vm_name}-nsg"
+resource "azurerm_application_gateway" "appgw" {
+  name                = "${var.app_name}-appgw"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
 
-  security_rule {
-    name                       = "SSH"
-    priority                   = 1001
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_range     = "22"
-    source_address_prefix      = "*"
-    destination_address_prefix = "*"
+  sku {
+    name     = "WAF_v2"
+    tier     = "WAF_v2"
+    capacity = 2
   }
 
-  security_rule {
-    name                       = "FastAPI"
-    priority                   = 1002
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_range     = "8000"
-    source_address_prefix      = "*"
-    destination_address_prefix = "*"
+  waf_configuration {
+    enabled          = true
+    firewall_mode    = "Prevention"
+    rule_set_type    = "OWASP"
+    rule_set_version = "3.2"
+  }
+
+  gateway_ip_configuration {
+    name      = "appgw-ip-config"
+    subnet_id = azurerm_subnet.appgw.id
+  }
+
+  frontend_ip_configuration {
+    name                 = "frontend-ip"
+    public_ip_address_id = azurerm_public_ip.appgw.id
+  }
+
+  frontend_port {
+    name = "port-80"
+    port = 80
+  }
+
+  # Backend pool — FastAPI Container App
+  backend_address_pool {
+    name  = "api-backend-pool"
+    fqdns = [azurerm_container_app.api.ingress[0].fqdn]
+  }
+
+  backend_http_settings {
+    name                                = "api-http-settings"
+    cookie_based_affinity               = "Disabled"
+    port                                = 443
+    protocol                            = "Https"
+    request_timeout                     = 120
+    pick_host_name_from_backend_address = true
+    probe_name                          = "api-health-probe"
+  }
+
+  probe {
+    name                                      = "api-health-probe"
+    protocol                                  = "Https"
+    path                                      = "/health"
+    interval                                  = 30
+    timeout                                   = 10
+    unhealthy_threshold                       = 3
+    pick_host_name_from_backend_http_settings = true
+    match {
+      status_code = ["200"]
+    }
+  }
+
+  http_listener {
+    name                           = "http-listener"
+    frontend_ip_configuration_name = "frontend-ip"
+    frontend_port_name             = "port-80"
+    protocol                       = "Http"
+  }
+
+  request_routing_rule {
+    name                       = "routing-rule"
+    rule_type                  = "Basic"
+    http_listener_name         = "http-listener"
+    backend_address_pool_name  = "api-backend-pool"
+    backend_http_settings_name = "api-http-settings"
+    priority                   = 100
   }
 }
 
-resource "azurerm_network_interface" "nic" {
-  name                = "${var.vm_name}-nic"
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+# ═══════════════════════════════════════════════════════════════
+#  CONTAINER APPS
+# ═══════════════════════════════════════════════════════════════
 
-  ip_configuration {
-    name                          = "internal"
-    subnet_id                     = azurerm_subnet.subnet.id
-    private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.pip.id
+resource "azurerm_container_app_environment" "env" {
+  name                       = "${var.app_name}-env"
+  location                   = azurerm_resource_group.rg.location
+  resource_group_name        = azurerm_resource_group.rg.name
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.logs.id
+  infrastructure_subnet_id   = azurerm_subnet.container_apps.id
+}
+
+# ── FastAPI ────────────────────────────────────────────────────
+resource "azurerm_container_app" "api" {
+  name                         = "${var.app_name}-api"
+  container_app_environment_id = azurerm_container_app_environment.env.id
+  resource_group_name          = azurerm_resource_group.rg.name
+  revision_mode                = "Single"
+
+  secret {
+    name  = "openai-api-key"
+    value = var.openai_api_key
+  }
+  secret {
+    name  = "hf-token"
+    value = var.hf_token
+  }
+
+  template {
+    container {
+      name    = "api"
+      image   = "shadsahaddad11111/llm-eval-model:latest"
+      cpu     = 1.0
+      memory  = "2Gi"
+      command = ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+      env {
+        name        = "OPENAI_API_KEY"
+        secret_name = "openai-api-key"
+      }
+      env {
+        name        = "HF_TOKEN"
+        secret_name = "hf-token"
+      }
+    }
+
+    min_replicas = 1
+    max_replicas = 5
+
+    http_scale_rule {
+      name                = "http-scaling"
+      concurrent_requests = 20
+    }
+  }
+
+  ingress {
+    external_enabled = true
+    target_port      = 8000
+    traffic_weight {
+      percentage      = 100
+      latest_revision = true
+    }
   }
 }
 
-resource "azurerm_network_interface_security_group_association" "nsg_assoc" {
-  network_interface_id      = azurerm_network_interface.nic.id
-  network_security_group_id = azurerm_network_security_group.nsg.id
-}
+# ── Prometheus ─────────────────────────────────────────────────
+resource "azurerm_container_app" "prometheus" {
+  name                         = "${var.app_name}-prometheus"
+  container_app_environment_id = azurerm_container_app_environment.env.id
+  resource_group_name          = azurerm_resource_group.rg.name
+  revision_mode                = "Single"
 
-# ── Virtual Machine ────────────────────────────────────────────
-resource "azurerm_linux_virtual_machine" "vm" {
-  name                = var.vm_name
-  resource_group_name = azurerm_resource_group.rg.name
-  location            = azurerm_resource_group.rg.location
-  size                = var.vm_size
-  admin_username      = var.admin_username
+  template {
+    container {
+      name   = "prometheus"
+      image  = "prom/prometheus:latest"
+      cpu    = 0.5
+      memory = "1Gi"
 
-  network_interface_ids = [azurerm_network_interface.nic.id]
+      args = [
+        "--config.file=/etc/prometheus/prometheus.yml",
+        "--storage.tsdb.path=/prometheus",
+        "--web.enable-lifecycle",
+      ]
 
-  admin_ssh_key {
-    username   = var.admin_username
-    public_key = tls_private_key.ssh.public_key_openssh
+      env {
+        name  = "API_FQDN"
+        value = azurerm_container_app.api.ingress[0].fqdn
+      }
+    }
+
+    min_replicas = 1
+    max_replicas = 1
   }
 
-  os_disk {
-    caching              = "ReadWrite"
-    storage_account_type = "Standard_LRS"
-    disk_size_gb         = 64
-  }
-
-  source_image_reference {
-    publisher = "Canonical"
-    offer     = "0001-com-ubuntu-server-jammy"
-    sku       = "22_04-lts-gen2"
-    version   = "latest"
+  ingress {
+    external_enabled = false
+    target_port      = 9090
+    traffic_weight {
+      percentage      = 100
+      latest_revision = true
+    }
   }
 }

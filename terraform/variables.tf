@@ -7,31 +7,23 @@ variable "resource_group_name" {
 variable "location" {
   description = "Azure region"
   type        = string
-  default     = "eastus"
+  default     = "westeurope"
 }
 
-variable "vm_name" {
-  description = "Name of the virtual machine"
+variable "app_name" {
+  description = "Base name used for all resources"
   type        = string
-  default     = "llm-eval-vm"
+  default     = "llm-eval"
 }
 
-variable "vm_size" {
-  description = "Azure VM size. Standard_D4s_v3 = 4 vCPU / 16 GB RAM. Upgrade to Standard_D8s_v3 after quota increase."
+variable "openai_api_key" {
+  description = "OpenAI API key — injected as a secret into the API container"
   type        = string
-  default     = "Standard_D4s_v3"
+  sensitive   = true
 }
 
-variable "admin_username" {
-  description = "SSH admin username for the VM"
+variable "hf_token" {
+  description = "HuggingFace token — injected as a secret into the API container"
   type        = string
-  default     = "azureuser"
+  sensitive   = true
 }
-
-variable "vm_zone" {
-  description = "Availability zone for the VM and public IP (1, 2, or 3). Required for zone-restricted SKUs on free-trial subscriptions."
-  type        = string
-  default     = "1"
-}
-
-# No SSH key variable needed — Terraform generates the key pair automatically via tls_private_key
