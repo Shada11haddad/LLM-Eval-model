@@ -7,6 +7,17 @@ totals = {"calls": 0, "tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0}
 _totals_lock = threading.Lock()
 
 
+def reset_totals():
+    """Call at the start of each evaluation run to clear cross-run accumulation."""
+    global metrics_tracker
+    with _totals_lock:
+        metrics_tracker = {}
+        totals["calls"] = 0
+        totals["tokens_in"] = 0
+        totals["tokens_out"] = 0
+        totals["cost_usd"] = 0.0
+
+
 def latency_label(seconds: float):
 
     if seconds < 2:

@@ -15,7 +15,7 @@ from src.generation.model_router import generate_answer
 from src.generation.qa_generation import generate_qa_pairs
 from src.evaluation.judge import judge_rag_answers, judge_open_qa_answers
 from src.evaluation.parse_verdict import parse_judge_verdict
-from src.evaluation.metrics import get_current_metrics, totals
+from src.evaluation.metrics import get_current_metrics, totals, reset_totals
 from src.storage.database import create_run, finish_run, save_results
 from src.utils.helpers import build_comparison_table
 
@@ -155,6 +155,8 @@ def run_evaluation(file_path: str, selected_models: list, prompt_template: str =
     Returns:
         dict with run_id, task_type, results, comparison_table, and total cost.
     """
+    reset_totals()  # clear costs/counts from any previous run in this process
+
     if not selected_models:
         raise ValueError("No models selected for evaluation")
 

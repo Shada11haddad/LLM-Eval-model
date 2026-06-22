@@ -180,7 +180,7 @@ def save_results(df, table_name, run_id):
 
     with get_connection() as conn:
 
-        out.to_sql(table_name,conn,if_exists="replace",index=False)
+        out.to_sql(table_name, conn, if_exists="append", index=False)
 
     return len(out)
 

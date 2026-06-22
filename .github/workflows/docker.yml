@@ -79,26 +79,34 @@ jobs:
 
       - name: Bootstrap Terraform remote state storage
         run: |
+          # Pin the CLI to the subscription from the login — avoids
+          # SubscriptionNotFound when passing the ID as a flag argument.
+          az account set --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+
           az group create \
             --name llm-eval-tfstate-rg \
             --location westeurope || true
 
+          # Create storage account only if it doesn't already exist
+          az storage account show \
+            --name llmevaltfstate \
+            --resource-group llm-eval-tfstate-rg \
+            --output none 2>/dev/null || \
           az storage account create \
             --name llmevaltfstate \
             --resource-group llm-eval-tfstate-rg \
             --location westeurope \
             --sku Standard_LRS \
-            --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+            --allow-blob-public-access false
 
           # Wait until the storage account is fully provisioned
           echo "Waiting for storage account to be ready..."
-          for i in $(seq 1 10); do
+          for i in $(seq 1 12); do
             STATE=$(az storage account show \
               --name llmevaltfstate \
               --resource-group llm-eval-tfstate-rg \
-              --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }} \
               --query "provisioningState" -o tsv 2>/dev/null || echo "waiting")
-            echo "  State: $STATE"
+            echo "  attempt $i — state: $STATE"
             [ "$STATE" = "Succeeded" ] && break
             sleep 10
           done
@@ -106,8 +114,7 @@ jobs:
           az storage container create \
             --name tfstate \
             --account-name llmevaltfstate \
-            --auth-mode login \
-            --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+            --auth-mode login
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
