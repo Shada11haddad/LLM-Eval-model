@@ -88,6 +88,24 @@ jobs:
           echo "Active subscription:"
           az account show --query "{name:name, id:id, state:state}" -o json
 
+          # A fresh subscription only auto-registers a few resource providers.
+          # Microsoft.Resources (used by 'group create') is always on, but
+          # Microsoft.Storage et al must be registered first — otherwise ARM
+          # returns a misleading "SubscriptionNotFound" when routing to them.
+          echo "Registering resource providers..."
+          PROVIDERS="Microsoft.Storage Microsoft.App Microsoft.Network \
+                     Microsoft.OperationalInsights Microsoft.ManagedIdentity"
+          # Kick off all registrations (returns immediately)...
+          for ns in $PROVIDERS; do
+            az provider register --namespace "$ns"
+          done
+          # ...then block until each is fully Registered. One-time cost on a
+          # fresh subscription; already-registered providers return instantly.
+          # Terraform Apply below also needs Microsoft.App / Microsoft.Network.
+          for ns in $PROVIDERS; do
+            az provider register --namespace "$ns" --wait
+          done
+
           az group create \
             --name llm-eval-tfstate-rg \
             --location westeurope || true
