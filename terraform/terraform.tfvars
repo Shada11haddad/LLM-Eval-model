@@ -7,5 +7,5 @@
 # the previous RG has been deleted.
 # ─────────────────────────────────────────────────────────────────────────────
 
-resource_group_name = "llm-eval-rg6"
+resource_group_name = "llm-eval-rg7"
 location            = "westeurope" # better free-trial capacity than eastus

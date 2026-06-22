@@ -17,3 +17,8 @@ output "api_fqdn" {
   description = "Container App internal FQDN — used by CI/CD"
   value       = azurerm_container_app.api.ingress[0].fqdn
 }
+
+output "streamlit_url" {
+  description = "MEYAR Streamlit UI — public URL"
+  value       = "https://${azurerm_container_app.streamlit.ingress[0].fqdn}"
+}

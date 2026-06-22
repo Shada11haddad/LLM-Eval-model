@@ -65,9 +65,12 @@ _eval_results: dict[int, dict] = {}   # store lightweight result summary per tok
 # ── Pydantic request models ────────────────────────────────────────────────────
 
 class EvaluateRequest(BaseModel):
-    file_path: str                       # path returned by POST /upload
-    selected_models: List[str]           # e.g. ["deepseek", "llama"]
-    prompt_template: Optional[str] = None  # custom prompt; None = use default
+    file_path: str                          # path returned by POST /upload
+    selected_models: List[str]              # e.g. ["deepseek", "llama"]
+    prompt_template: Optional[str] = None   # custom prompt; None = use default
+    chunk_size: Optional[int] = None        # RAG chunking override; None = cfg default
+    chunk_overlap: Optional[int] = None     # RAG chunking override; None = cfg default
+    num_questions: Optional[int] = None     # cap on questions to evaluate; None = default
 
 
 # ── Health ─────────────────────────────────────────────────────────────────────
@@ -110,7 +113,7 @@ def status():
     if hf_token:
         try:
             r = httpx.get(
-                "https://huggingface.co/api/whoami",
+                "https://huggingface.co/api/whoami-v2",
                 headers={"Authorization": f"Bearer {hf_token}"},
                 timeout=5,
             )
@@ -168,7 +171,8 @@ async def upload_file(file: UploadFile = File(...)):
 
 # ── Trigger evaluation ─────────────────────────────────────────────────────────
 
-def _background_evaluation(token_id: int, file_path: str, selected_models: list, prompt_template: Optional[str]):
+def _background_evaluation(token_id: int, file_path: str, selected_models: list, prompt_template: Optional[str],
+                           chunk_size: Optional[int], chunk_overlap: Optional[int], num_questions: Optional[int]):
     """Run evaluation in a background thread and record outcome."""
     from src.evaluation.run_eval import run_evaluation
     try:
@@ -176,6 +180,9 @@ def _background_evaluation(token_id: int, file_path: str, selected_models: list,
             file_path=file_path,
             selected_models=selected_models,
             prompt_template=prompt_template,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            num_questions=num_questions,
         )
         _eval_results[token_id] = {
             "run_id": result["run_id"],
@@ -197,6 +204,9 @@ def trigger_evaluation(request: EvaluateRequest, background_tasks: BackgroundTas
         file_path       — path returned by POST /upload
         selected_models — list of model keys, e.g. ["deepseek", "llama", "qwen"]
         prompt_template — optional custom prompt string
+        chunk_size      — optional RAG chunk size override
+        chunk_overlap   — optional RAG chunk overlap override
+        num_questions   — optional cap on number of questions to evaluate
 
     Returns immediately with a token_id.
     Poll GET /evaluate/status/{token_id} until status is "done".
@@ -223,6 +233,9 @@ def trigger_evaluation(request: EvaluateRequest, background_tasks: BackgroundTas
         request.file_path,
         request.selected_models,
         request.prompt_template,
+        request.chunk_size,
+        request.chunk_overlap,
+        request.num_questions,
     )
 
     return {

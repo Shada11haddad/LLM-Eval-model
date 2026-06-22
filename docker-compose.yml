@@ -48,6 +48,23 @@ services:
       - ./data:/app/data
     restart: unless-stopped
 
+  # Streamlit UI (MEYAR) — talks to the api service over HTTP
+  streamlit:
+    build: .
+    command: streamlit run src/app/app.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+    env_file:
+      - .env
+    environment:
+      - API_URL=http://api:8000
+    volumes:
+      - ./outputs:/app/outputs
+      - ./data:/app/data
+    restart: unless-stopped
+
   # Batch evaluation run (runs once, then exits)
   app:
     build: .

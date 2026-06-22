@@ -180,7 +180,7 @@ def save_results(df, table_name, run_id):
 
     with get_connection() as conn:
 
-        out.to_sql(table_name, conn, if_exists="append", index=False)
+        out.to_sql(table_name,conn,if_exists="replace",index=False)
 
     return len(out)
 
@@ -204,6 +204,16 @@ def list_runs():
 def load_results(table_name, run_id=None):
 
     with get_connection() as conn:
+
+        # If the table doesn't exist yet (e.g. no RAG run has been saved to
+        # this DB), return an empty DataFrame instead of raising "no such table".
+        exists = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+            (table_name,),
+        ).fetchone()
+
+        if not exists:
+            return pd.DataFrame()
 
         if run_id is None:
 

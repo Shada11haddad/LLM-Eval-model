@@ -157,7 +157,8 @@ jobs:
         working-directory: terraform
         run: |
           echo "================================================"
-          echo "Public IP : $(terraform output -raw public_ip)"
-          echo "API URL   : $(terraform output -raw api_url)"
-          echo "Docs URL  : $(terraform output -raw api_docs_url)"
+          echo "Public IP     : $(terraform output -raw public_ip)"
+          echo "API URL       : $(terraform output -raw api_url)"
+          echo "Docs URL      : $(terraform output -raw api_docs_url)"
+          echo "Streamlit UI  : $(terraform output -raw streamlit_url)"
           echo "================================================"

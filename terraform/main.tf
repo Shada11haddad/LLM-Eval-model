@@ -301,3 +301,50 @@ resource "azurerm_container_app" "prometheus" {
     }
   }
 }
+
+# ── Streamlit UI (MEYAR) ───────────────────────────────────────
+# Same image as the API; only the start command differs. Talks to the
+# FastAPI app over HTTPS via the API_URL env var (app.py reads API_URL).
+resource "azurerm_container_app" "streamlit" {
+  name                         = "${var.app_name}-streamlit"
+  container_app_environment_id = azurerm_container_app_environment.env.id
+  resource_group_name          = azurerm_resource_group.rg.name
+  revision_mode                = "Single"
+
+  template {
+    container {
+      name   = "streamlit"
+      image  = "shadsahaddad11111/llm-eval-model:latest"
+      cpu    = 0.5
+      memory = "1Gi"
+
+      command = [
+        "streamlit", "run", "src/app/app.py",
+        "--server.port", "8501",
+        "--server.address", "0.0.0.0",
+        "--server.headless", "true",
+        # Behind the Container Apps ingress proxy these must be off or the
+        # websocket/session handshake is blocked.
+        "--server.enableCORS", "false",
+        "--server.enableXsrfProtection", "false",
+      ]
+
+      env {
+        name  = "API_URL"
+        value = "https://${azurerm_container_app.api.ingress[0].fqdn}"
+      }
+    }
+
+    min_replicas = 1
+    max_replicas = 1
+  }
+
+  ingress {
+    external_enabled = true
+    target_port      = 8501
+    traffic_weight {
+      percentage      = 100
+      latest_revision = true
+    }
+  }
+}

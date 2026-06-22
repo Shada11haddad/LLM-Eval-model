@@ -15,9 +15,10 @@ from src.generation.model_router import generate_answer
 from src.generation.qa_generation import generate_qa_pairs
 from src.evaluation.judge import judge_rag_answers, judge_open_qa_answers
 from src.evaluation.parse_verdict import parse_judge_verdict
-from src.evaluation.metrics import get_current_metrics, totals, reset_totals
+from src.evaluation.metrics import get_current_metrics, totals
 from src.storage.database import create_run, finish_run, save_results
 from src.utils.helpers import build_comparison_table
+from src.ingestion.loader import normalize_unknown_qa_file
 
 
 # How many questions to evaluate at once. Higher = faster, but too high can trip
@@ -140,7 +141,8 @@ def _run_parallel(worker, task_args_list):
     return [r for r in results if r is not None]
 
 
-def run_evaluation(file_path: str, selected_models: list, prompt_template: str = None):
+def run_evaluation(file_path: str, selected_models: list, prompt_template: str = None,
+                   chunk_size: int = None, chunk_overlap: int = None, num_questions: int = None):
     """
     Main evaluation entrypoint.
 
@@ -151,12 +153,17 @@ def run_evaluation(file_path: str, selected_models: list, prompt_template: str =
             the {question} placeholder (plus {context} for the RAG track). If None,
             the track's default prompt is used. The template actually used is saved
             to the run's `notes` column, so every run is traceable to its prompt.
+        chunk_size / chunk_overlap: optional RAG chunking overrides. If None, the
+            config defaults (cfg.CHUNK_SIZE / cfg.CHUNK_OVERLAP) are used. Only
+            affects the RAG track.
+        num_questions: optional cap on how many questions to evaluate. If None, the
+            default applies (all questions, up to 50 for QA files). For RAG, it limits
+            how many chunks get turned into questions (the full set is still indexed
+            for retrieval).
 
     Returns:
         dict with run_id, task_type, results, comparison_table, and total cost.
     """
-    reset_totals()  # clear costs/counts from any previous run in this process
-
     if not selected_models:
         raise ValueError("No models selected for evaluation")
 
@@ -165,6 +172,14 @@ def run_evaluation(file_path: str, selected_models: list, prompt_template: str =
 
     task_type = detect_task_type(file_path)
 
+
+    if task_type == "open_qa_needs_normalization":
+
+        normalized_df = normalize_unknown_qa_file(file_path)
+        task_type = "open_qa"
+    else:
+        normalized_df = None
+    
     # Resolve the prompt: custom if given, else the track's default.
     if task_type == "open_qa":
         effective_prompt = prompt_template or DEFAULT_OPEN_QA_PROMPT
@@ -173,13 +188,17 @@ def run_evaluation(file_path: str, selected_models: list, prompt_template: str =
     else:
         raise ValueError(f"Unknown task type: {task_type}")
 
+    # Resolve chunking: custom overrides if given, else cfg defaults.
+    effective_chunk_size = chunk_size if chunk_size is not None else cfg.CHUNK_SIZE
+    effective_chunk_overlap = chunk_overlap if chunk_overlap is not None else cfg.CHUNK_OVERLAP
+
     run_id = create_run(
         dataset_name=os.path.basename(file_path),
         task_type=task_type,
         judge_model=cfg.MODELS["judge"]["model"],
         embedding_model=cfg.EMBEDDING_MODEL,
-        chunk_size=cfg.CHUNK_SIZE,
-        chunk_overlap=cfg.CHUNK_OVERLAP,
+        chunk_size=effective_chunk_size,
+        chunk_overlap=effective_chunk_overlap,
         notes=effective_prompt,          # ← prompt used, recorded for traceability
     )
 
@@ -187,10 +206,16 @@ def run_evaluation(file_path: str, selected_models: list, prompt_template: str =
 
     if task_type == "open_qa":
 
-        df = load_qa_dataset(file_path)
-        df = _normalize_qa_columns(df)
-        if len(df) > 50:
-            df = df.sample(n=50, random_state=42)
+        if normalized_df is not None:
+             df = normalized_df   
+        else:
+             df = load_qa_dataset(file_path)
+             df = _normalize_qa_columns(df)
+
+        # Cap the number of questions. A custom num_questions overrides the default 50.
+        limit = num_questions if num_questions is not None else 50
+        if len(df) > limit:
+            df = df.sample(n=limit, random_state=42)
 
         task_args = [
             (row["question"], row["reference_answer"], selected_models, effective_prompt)
@@ -204,12 +229,15 @@ def run_evaluation(file_path: str, selected_models: list, prompt_template: str =
 
         text = load_document(file_path)
         docs = [Document(page_content=text)]
-        chunks = chunk_documents(docs)
+        chunks = chunk_documents(docs, chunk_size=effective_chunk_size, chunk_overlap=effective_chunk_overlap)
 
-        index_name = f"run_{run_id}"
+        index_name = f"run_{run_id}_{int(time.time())}"
         index, indexed_chunks, *_ = get_or_build_vectorstore(index_name, chunks)
 
-        qa_df = generate_qa_pairs(indexed_chunks)
+        # One QA pair per chunk. If num_questions is set, only generate for the
+        # first N chunks — the full set is still indexed for retrieval.
+        qa_source_chunks = indexed_chunks[:num_questions] if num_questions is not None else indexed_chunks
+        qa_df = generate_qa_pairs(qa_source_chunks)
 
         task_args = [
             (row["question"], row["reference_answer"], selected_models, index, indexed_chunks, effective_prompt)

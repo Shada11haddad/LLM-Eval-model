@@ -6,7 +6,7 @@ def parse_judge_verdict(verdict: str):
 
     results = {}
 
-    for model_name in (k for k in cfg.MODELS.keys() if k != "judge"):
+    for model_name in cfg.MODELS.keys():
 
         pattern = (
             rf"{model_name.upper()}:\s*\n"
