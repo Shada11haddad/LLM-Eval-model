@@ -1,4 +1,4 @@
-name: Build, Push & Deploy
+name: Build, Provision & Deploy
 
 on:
   push:
@@ -8,8 +8,14 @@ on:
     branches:
       - main
 
+env:
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
 jobs:
-  # ── Job 1: Build & push image to Docker Hub ────────────────────────────────
+  # ── Job 1: Build Docker image and push to Docker Hub ───────────────────────
   build-and-push:
     name: Build & Push to Docker Hub
     runs-on: ubuntu-latest
@@ -29,7 +35,7 @@ jobs:
         with:
           driver: docker
 
-      - name: Extract metadata (tags & labels)
+      - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -47,14 +53,19 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  # ── Job 2: Deploy to Azure Container Apps (push to main only) ──────────────
-  deploy:
-    name: Deploy to Azure Container Apps
+  # ── Job 2: Terraform — create all Azure resources ──────────────────────────
+  # First run: creates Container Apps, App Gateway, everything from scratch.
+  # Re-runs: only updates what changed (idempotent).
+  terraform:
+    name: Terraform Provision
     runs-on: ubuntu-latest
     needs: build-and-push
     if: github.event_name == 'push'
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Azure login
         uses: azure/login@v2
         with:
@@ -66,43 +77,41 @@ jobs:
               "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
             }
 
-      - name: Update Container App with new image
+      - name: Bootstrap Terraform remote state storage
         run: |
-          az containerapp update \
-            --name llm-eval-api \
-            --resource-group llm-eval-rg \
-            --image shadsahaddad11111/llm-eval-model:latest
+          az group create \
+            --name llm-eval-tfstate-rg \
+            --location westeurope 2>/dev/null || true
 
-      - name: Wait for revision to be running
+          az storage account create \
+            --name llmevaltfstate \
+            --resource-group llm-eval-tfstate-rg \
+            --location westeurope \
+            --sku Standard_LRS 2>/dev/null || true
+
+          az storage container create \
+            --name tfstate \
+            --account-name llmevaltfstate 2>/dev/null || true
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Terraform Apply
+        working-directory: terraform
         run: |
-          echo "Waiting for new revision..."
-          for i in $(seq 1 20); do
-            STATUS=$(az containerapp revision list \
-              --name llm-eval-api \
-              --resource-group llm-eval-rg \
-              --query "[0].properties.runningState" -o tsv)
-            echo "  State: $STATUS"
-            [ "$STATUS" = "Running" ] && break
-            sleep 15
-          done
+          terraform apply -auto-approve \
+            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+            -var="hf_token=${{ secrets.HF_TOKEN }}"
 
-      - name: Health check via Application Gateway
+      - name: Print deployment URLs
+        working-directory: terraform
         run: |
-          APPGW_IP=$(az network public-ip show \
-            --name llm-eval-appgw-pip \
-            --resource-group llm-eval-rg \
-            --query "ipAddress" -o tsv)
-
-          echo "Testing http://$APPGW_IP/health ..."
-          for i in $(seq 1 5); do
-            CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://$APPGW_IP/health")
-            echo "  Attempt $i: HTTP $CODE"
-            if [ "$CODE" = "200" ]; then
-              echo "Deployment successful."
-              echo "API : http://$APPGW_IP"
-              echo "Docs: http://$APPGW_IP/docs"
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "Health check failed." && exit 1
+          echo "================================================"
+          echo "Public IP : $(terraform output -raw public_ip)"
+          echo "API URL   : $(terraform output -raw api_url)"
+          echo "Docs URL  : $(terraform output -raw api_docs_url)"
+          echo "================================================"
