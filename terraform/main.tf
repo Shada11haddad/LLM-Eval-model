@@ -6,6 +6,15 @@ terraform {
     }
   }
   required_version = ">= 1.3.0"
+
+  # Remote state stored in Azure Blob Storage
+  # The storage account is created by the GitHub Actions bootstrap step
+  backend "azurerm" {
+    resource_group_name  = "llm-eval-tfstate-rg"
+    storage_account_name = "llmevaltfstate"
+    container_name       = "tfstate"
+    key                  = "llm-eval.terraform.tfstate"
+  }
 }
 
 provider "azurerm" {
