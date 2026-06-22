@@ -69,35 +69,37 @@ jobs:
       - name: Azure login
         uses: azure/login@v2
         with:
-          creds: |
-            {
-              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
-              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
-              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
-              "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
-            }
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
 
       - name: Bootstrap Terraform remote state storage
         run: |
-          # Pin the CLI to the subscription from the login — avoids
-          # SubscriptionNotFound when passing the ID as a flag argument.
-          az account set --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+          # azure/login (subscription-id input) already sets the active
+          # subscription. Don't re-set it from the raw secret — az account set
+          # doesn't validate the value, so any stray whitespace/newline in the
+          # secret produces SubscriptionNotFound on later commands.
+
+          # Confirm which subscription is active (visible in the Actions log).
+          echo "Active subscription:"
+          az account show --query "{name:name, id:id, state:state}" -o json
 
           az group create \
             --name llm-eval-tfstate-rg \
             --location westeurope || true
 
           # Create storage account only if it doesn't already exist
-          az storage account show \
-            --name llmevaltfstate \
-            --resource-group llm-eval-tfstate-rg \
-            --output none 2>/dev/null || \
-          az storage account create \
-            --name llmevaltfstate \
-            --resource-group llm-eval-tfstate-rg \
-            --location westeurope \
-            --sku Standard_LRS \
-            --allow-blob-public-access false
+          if ! az storage account show \
+              --name llmevaltfstate \
+              --resource-group llm-eval-tfstate-rg \
+              --output none 2>/dev/null; then
+            az storage account create \
+              --name llmevaltfstate \
+              --resource-group llm-eval-tfstate-rg \
+              --location westeurope \
+              --sku Standard_LRS
+          fi
 
           # Wait until the storage account is fully provisioned
           echo "Waiting for storage account to be ready..."
