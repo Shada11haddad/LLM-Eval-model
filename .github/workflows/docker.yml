@@ -87,7 +87,8 @@ jobs:
             --name llmevaltfstate \
             --resource-group llm-eval-tfstate-rg \
             --location westeurope \
-            --sku Standard_LRS
+            --sku Standard_LRS \
+            --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
           # Wait until the storage account is fully provisioned
           echo "Waiting for storage account to be ready..."
@@ -95,6 +96,7 @@ jobs:
             STATE=$(az storage account show \
               --name llmevaltfstate \
               --resource-group llm-eval-tfstate-rg \
+              --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }} \
               --query "provisioningState" -o tsv 2>/dev/null || echo "waiting")
             echo "  State: $STATE"
             [ "$STATE" = "Succeeded" ] && break
@@ -104,7 +106,8 @@ jobs:
           az storage container create \
             --name tfstate \
             --account-name llmevaltfstate \
-            --auth-mode login
+            --auth-mode login \
+            --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
