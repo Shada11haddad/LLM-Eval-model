@@ -1,17 +1,11 @@
 # ── terraform.tfvars ──────────────────────────────────────────────────────────
-# This file is gitignored — never commit it.
-# SSH keys are generated automatically — nothing to paste here.
-# Run: terraform -chdir=terraform plan -out=tfplan
+# Non-secret variable values for the Container Apps deployment.
+# Secrets (openai_api_key, hf_token) are passed via -var on the CLI / CI, never here.
+#
+# NOTE: a fresh resource_group_name is used per deployment because the old RG is
+# not destroyed between runs. Bump the suffix (rg5 -> rg6) for the next run unless
+# the previous RG has been deleted.
 # ─────────────────────────────────────────────────────────────────────────────
 
 resource_group_name = "llm-eval-rg5"
-location            = "westeurope"          # better free-trial capacity than eastus
-vm_name             = "llm-eval-vm"
-vm_size             = "Standard_D4s_v3"    # 4 vCPU / 16 GB — minimum to run the models
-admin_username      = "azureuser"
-
-
-
-##eastus2 replaced with swedencentral to now with westeurope, eastasia
-##Standard_B4ms repalced with Standard_B1s
-##every new run needs a new resource_group_name, now its llm-eval-rg2, next time it weill be llm-eval-rg3 unless we deleted the llm-eval-rg2.
+location            = "westeurope" # better free-trial capacity than eastus
