@@ -121,6 +121,13 @@ resource "azurerm_application_gateway" "appgw" {
     capacity = 2
   }
 
+  # Without this, the gateway defaults to AppGwSslPolicy20150501 (TLS 1.0/1.1),
+  # which Azure now rejects. Pin a modern predefined policy (TLS 1.2 minimum).
+  ssl_policy {
+    policy_type = "Predefined"
+    policy_name = "AppGwSslPolicy20220101"
+  }
+
   gateway_ip_configuration {
     name      = "appgw-ip-config"
     subnet_id = azurerm_subnet.appgw.id
