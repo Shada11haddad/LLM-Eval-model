@@ -23,7 +23,8 @@ variable "openai_api_key" {
 }
 
 variable "hf_token" {
-  description = "HuggingFace token — injected as a secret into the API container"
+  description = "HuggingFace token — injected as a secret into the API container. Optional; leave empty to skip."
   type        = string
   sensitive   = true
+  default     = ""
 }

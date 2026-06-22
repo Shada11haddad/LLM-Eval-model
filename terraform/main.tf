@@ -86,22 +86,39 @@ resource "azurerm_public_ip" "appgw" {
   sku                 = "Standard"
 }
 
+# Inline waf_configuration on the gateway has been retired by Azure; WAF
+# settings now live in a standalone policy attached via firewall_policy_id.
+resource "azurerm_web_application_firewall_policy" "appgw" {
+  name                = "${var.app_name}-waf-policy"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+
+  policy_settings {
+    enabled                     = true
+    mode                        = "Prevention"
+    file_upload_limit_in_mb     = 100
+    max_request_body_size_in_kb = 128
+    request_body_check          = true
+  }
+
+  managed_rules {
+    managed_rule_set {
+      type    = "OWASP"
+      version = "3.2"
+    }
+  }
+}
+
 resource "azurerm_application_gateway" "appgw" {
   name                = "${var.app_name}-appgw"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
+  firewall_policy_id  = azurerm_web_application_firewall_policy.appgw.id
 
   sku {
     name     = "WAF_v2"
     tier     = "WAF_v2"
     capacity = 2
-  }
-
-  waf_configuration {
-    enabled          = true
-    firewall_mode    = "Prevention"
-    rule_set_type    = "OWASP"
-    rule_set_version = "3.2"
   }
 
   gateway_ip_configuration {
@@ -188,9 +205,14 @@ resource "azurerm_container_app" "api" {
     name  = "openai-api-key"
     value = var.openai_api_key
   }
-  secret {
-    name  = "hf-token"
-    value = var.hf_token
+  # Only create the hf-token secret when a value is supplied — Azure rejects
+  # empty secret values (ContainerAppSecretInvalid).
+  dynamic "secret" {
+    for_each = var.hf_token != "" ? [1] : []
+    content {
+      name  = "hf-token"
+      value = var.hf_token
+    }
   }
 
   template {
@@ -205,9 +227,12 @@ resource "azurerm_container_app" "api" {
         name        = "OPENAI_API_KEY"
         secret_name = "openai-api-key"
       }
-      env {
-        name        = "HF_TOKEN"
-        secret_name = "hf-token"
+      dynamic "env" {
+        for_each = var.hf_token != "" ? [1] : []
+        content {
+          name        = "HF_TOKEN"
+          secret_name = "hf-token"
+        }
       }
     }
 
