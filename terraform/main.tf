@@ -208,17 +208,20 @@ resource "azurerm_container_app" "api" {
   resource_group_name          = azurerm_resource_group.rg.name
   revision_mode                = "Single"
 
+  # trimspace guards against a trailing newline in the GitHub secret, which
+  # otherwise becomes part of the value and produces "Illegal header value
+  # b'Bearer sk-...\n'" when the app builds the Authorization header.
   secret {
     name  = "openai-api-key"
-    value = var.openai_api_key
+    value = trimspace(var.openai_api_key)
   }
   # Only create the hf-token secret when a value is supplied — Azure rejects
   # empty secret values (ContainerAppSecretInvalid).
   dynamic "secret" {
-    for_each = var.hf_token != "" ? [1] : []
+    for_each = trimspace(var.hf_token) != "" ? [1] : []
     content {
       name  = "hf-token"
-      value = var.hf_token
+      value = trimspace(var.hf_token)
     }
   }
 
@@ -235,7 +238,7 @@ resource "azurerm_container_app" "api" {
         secret_name = "openai-api-key"
       }
       dynamic "env" {
-        for_each = var.hf_token != "" ? [1] : []
+        for_each = trimspace(var.hf_token) != "" ? [1] : []
         content {
           name        = "HF_TOKEN"
           secret_name = "hf-token"

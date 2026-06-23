@@ -155,10 +155,17 @@ jobs:
 
       - name: Print deployment URLs
         working-directory: terraform
+        # Purely informational — apply has already succeeded by here, so a
+        # transient state-read blip must not fail the whole deploy.
+        continue-on-error: true
         run: |
+          # Single state read. Calling 'terraform output' once per value
+          # re-reads remote state each time and is prone to transient
+          # "connection reset" errors against the state storage account.
+          outputs=$(terraform output -json)
           echo "================================================"
-          echo "Public IP     : $(terraform output -raw public_ip)"
-          echo "API URL       : $(terraform output -raw api_url)"
-          echo "Docs URL      : $(terraform output -raw api_docs_url)"
-          echo "Streamlit UI  : $(terraform output -raw streamlit_url)"
+          echo "Public IP     : $(echo "$outputs" | jq -r '.public_ip.value')"
+          echo "API URL       : $(echo "$outputs" | jq -r '.api_url.value')"
+          echo "Docs URL      : $(echo "$outputs" | jq -r '.api_docs_url.value')"
+          echo "Streamlit UI  : $(echo "$outputs" | jq -r '.streamlit_url.value')"
           echo "================================================"
