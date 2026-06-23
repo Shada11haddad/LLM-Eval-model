@@ -2,10 +2,13 @@
 # Non-secret variable values for the Container Apps deployment.
 # Secrets (openai_api_key, hf_token) are passed via -var on the CLI / CI, never here.
 #
-# NOTE: a fresh resource_group_name is used per deployment because the old RG is
-# not destroyed between runs. Bump the suffix (rg5 -> rg6) for the next run unless
-# the previous RG has been deleted.
+# IMPORTANT: resource_group_name is PINNED. Do NOT change it between runs.
+# The remote state backend tracks every resource, so keeping the same name lets
+# Terraform run incrementally (seconds). Changing it forces a full destroy +
+# recreate of the whole stack — including a ~5 min Container App Environment
+# teardown. To delete an old/orphaned RG, do it out-of-band and async:
+#   az group delete -n <old-rg-name> --yes --no-wait
 # ─────────────────────────────────────────────────────────────────────────────
 
-resource_group_name = "llm-eval-rg7"
-location            = "westeurope" # better free-trial capacity than eastus
+resource_group_name = "llm-eval-rg" # PINNED — leave this alone
+location            = "westeurope"  # better free-trial capacity than eastus
