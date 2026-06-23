@@ -217,7 +217,9 @@ Expand the **Advanced options** panel to customise:
 
 ### 4. Rank models by your priorities (optional)
 
-| Priority metric | The metric to rank models by — results are sorted according to your chosen metric (constraint-based selection) |
+| Option | Description |
+|---|---|
+| Priority metric | The metric to rank models by results are sorted according to your chosen metric (constraint-based selection) |
 
 ### 5. Run evaluation
 
