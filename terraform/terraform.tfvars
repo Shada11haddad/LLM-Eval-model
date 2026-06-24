@@ -11,4 +11,4 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 resource_group_name = "llm-eval-rg" # PINNED — leave this alone
-location            = "westeurope"  # better free-trial capacity than eastus
+location            = "eastus"  # better free-trial capacity than eastus
