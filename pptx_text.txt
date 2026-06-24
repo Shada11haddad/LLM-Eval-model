@@ -1,0 +1,26 @@
+--- p1 ---
+L L M E V A L U A T I O N P L A T F O R M
+--- p2 ---
+List of Content 02 01 Team Members Problem Statement 03 Proposed Solution 04 Project Objectives 06 Technologies Stack 07 Results 08 Future Improvements 05 System Architecture LLM EVALUATION PLATFORM
+--- p3 ---
+Our Team Maryam Mohammed Shada Haddad Aser Zahrani LLM EVALUATION PLATFORM
+--- p4 ---
+Problem Statement Decisions by vibes Teams pick models from vendor benchmarks or a handful of prompts — not measured evidence on their own data. No unified view Quality, faithfulness, latency, and cost are never compared together in one place. Leaderboards ≠ your use case Public scores ignore your domain, your documents, and your retrieval setup. Costly, undefendable choices The wrong model wastes money and erodes trust in the system. Choosing an LLM today is mostly guesswork. LLM EVALUATION PLATFORM
+--- p5 ---
+LLM EVALUATION PLATFORM Proposed solution — Two evaluation tracks RAG (auto-generated QA from your documents) and Open QA (Any CSV/XLSX questions set you upload). One dashboard Faithfulness, relevance, latency, and cost compared across every model. Dual scoring RAGAS metrics combined with an LLM-as-judge for nuanced quality assessment. Reproducible runs Each evaluation is stored and re-comparable — results you can defend. A deployed platform that benchmarks LLM outputs side-by-side on your data.
+--- p6 ---
+Project objectives Compare four models GPT-4o, Llama, DeepSeek and Qwen under identical conditions. Cover both modes RAG quality and open-ended factuality on the same platform. Expose trade-offs Surface quality vs. latency vs. cost for every model. Ship a real product A usable, deployed web app — not a notebook. Automate evaluation Repeatable pipeline with no manual scoring. LLM EVALUATION PLATFORM
+--- p7 ---
+System Architecture LLM EVALUATION PLATFORM Tech stack: Streamlit · FastAPI + uvicorn · LangChain · FAISS · OpenAI embeddings · RAGAS · GPT-5.5 judge · SQLite · Azure Container Apps · Docker
+--- p8 ---
+Technology Stack LLM EVALUATION PLATFORM
+--- p9 ---
+LLM EVALUATION PLATFORM 4 models · 20 questions Scored across 7 metrics on the Open QA track. Results - Open QA GPT-4o leads on quality Top coherence (0.98) and relevance (0.92) — but ~100× the cost per run. Llama fastest & cheapest 1.31s and $0.000061 / run. Qwen scores lowest across the board.
+--- p10 ---
+LLM EVALUATION PLATFORM Results - RAG RAGAS retrieval metrics RAG track — deepseek and gpt4o shown for this run. Precision is the weak spot Context precision 0.26 — retrieval is complete but noisy. GPT-4o edges relevancy (0.78 vs 0.65). Strong faithfulness & recall Faithfulness and context recall both 1.00 across models.
+--- p11 ---
+Live demo
+--- p12 ---
+Future improvements Run history Move to append / long format storage; Postgres for concurrent runs. Run history Run history Resilience Add retry and backoff to inference API calls. Resilience Resilience Validation Run a judge-vs-human agreement study to verify scoring. Validation Validation Optimization Prompt optimization loop (GEPA) to measure improvement across runs. Optimization Optimization Coverage Add more models and private / custom evaluation datasets. Coverage Coverage LLM EVALUATION PLATFORM
+--- p13 ---
+Presented by: Maryam Mohammed · Shada Haddad · Aser Zahrani Thank you Meyar — LLM Evaluation Platform LLM EVALUATION PLATFORM
