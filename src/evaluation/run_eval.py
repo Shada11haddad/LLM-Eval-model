@@ -19,6 +19,7 @@ from src.evaluation.metrics import get_current_metrics, totals
 from src.storage.database import create_run, finish_run, save_results
 from src.utils.helpers import build_comparison_table
 from src.ingestion.loader import normalize_unknown_qa_file
+from src.generation.clients import judge_client
 
 
 # How many questions to evaluate at once. Higher = faster, but too high can trip
@@ -141,6 +142,22 @@ def _run_parallel(worker, task_args_list):
     return [r for r in results if r is not None]
 
 
+def _is_non_english(text: str) -> bool:
+    sample = text[:200]
+    non_ascii = sum(1 for c in sample if ord(c) > 127)
+    return non_ascii / max(len(sample), 1) > 0.3
+
+def _translate_text(text: str) -> str:
+    chunk_size = 2000
+    chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+    translated = []
+    for chunk in chunks:
+        prompt = f"Translate the following text to English. Return ONLY the translation:\n\n{chunk}"
+        response = judge_client.invoke(prompt)
+        translated.append(response.content.strip())
+    return "\n".join(translated)
+
+
 def run_evaluation(file_path: str, selected_models: list, prompt_template: str = None,
                    chunk_size: int = None, chunk_overlap: int = None, num_questions: int = None):
     """
@@ -228,6 +245,10 @@ def run_evaluation(file_path: str, selected_models: list, prompt_template: str =
     else:  # rag (already validated above)
 
         text = load_document(file_path)
+        
+        if _is_non_english(text): 
+            text = _translate_text(text)
+
         docs = [Document(page_content=text)]
         chunks = chunk_documents(docs, chunk_size=effective_chunk_size, chunk_overlap=effective_chunk_overlap)
 
