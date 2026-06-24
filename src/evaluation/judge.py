@@ -1,6 +1,5 @@
 from src.generation.clients import judge_client
 
-
 def judge_rag_answers(question,context,reference_answer,model_answers,model_metrics):
 
     answers_text = ""

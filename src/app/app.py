@@ -10,15 +10,11 @@ import pandas as pd
 import requests
 import streamlit as st
 
-# ============================================================
-# Backend URL
-# ============================================================
+
 
 API_URL = os.environ.get("API_URL", "http://localhost:8000")
 
-# ============================================================
-# Page config
-# ============================================================
+
 
 st.set_page_config(
     page_title="MEYAR - LLM Evaluation Platform",
@@ -26,10 +22,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-# ============================================================
-# Theme - dark mode, purple/violet accent
-# ============================================================
 
 BG = "#080A10"
 BG_2 = "#0D1018"
@@ -541,9 +533,6 @@ st.markdown(
 )
 
 
-# ============================================================
-# Small presentation helpers
-# ============================================================
 
 
 def model_logo_html(model_name: str) -> str:
@@ -602,7 +591,6 @@ def render_step_title(title: str):
     st.markdown(f'<span class="step-title">{title}</span>', unsafe_allow_html=True)
 
 
-# ============================================================
 # Session state
 # ============================================================
 
@@ -617,7 +605,6 @@ for k, v in defaults.items():
         st.session_state[k] = v
 
 
-# ============================================================
 # API helpers
 # ============================================================
 
@@ -719,7 +706,6 @@ def build_comparison_table(results_df: pd.DataFrame):
     return pd.DataFrame(rows), model_cols, metric_names
 
 
-# ============================================================
 # Priority-based model ranking
 # ============================================================
 
@@ -768,7 +754,6 @@ def rank_models_by_priority(comparison_df, priority_metrics):
     return df
 
 
-# ============================================================
 # Sidebar
 # ============================================================
 
@@ -808,7 +793,6 @@ with st.sidebar:
         st.markdown('<p class="sidebar-empty">No runs yet</p>', unsafe_allow_html=True)
 
 
-# ============================================================
 # Settings page  (System & diagnostics)
 # ============================================================
 
@@ -906,7 +890,6 @@ if st.session_state.page == "Settings":
     st.stop()
 
 
-# ============================================================
 # Results detail page
 # ============================================================
 
@@ -951,7 +934,6 @@ if st.session_state.page == "Results detail":
     st.stop()
 
 
-# ============================================================
 # New run page (main)
 # ============================================================
 
@@ -1085,7 +1067,6 @@ if run_clicked:
             status_box.error(f"Something went wrong: {e}")
 
 
-# ============================================================
 # Results summary (metrics + table + small charts)
 # ============================================================
 
