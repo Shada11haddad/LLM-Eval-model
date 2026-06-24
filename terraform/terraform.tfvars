@@ -10,5 +10,5 @@
 #   az group delete -n <old-rg-name> --yes --no-wait
 # ─────────────────────────────────────────────────────────────────────────────
 
-resource_group_name = "llm-eval-rg" # PINNED — leave this alone
+resource_group_name = "llm-eval-rg1" # PINNED — leave this alone
 location            = "eastus"  # better free-trial capacity than eastus
